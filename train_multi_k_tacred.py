@@ -151,17 +151,6 @@ class Manager(object):
                         mask_list.extend(seen_des[rel_id]['mask'])
                     batch_instance['ids'] = torch.tensor(ids_list).to(self.config.device)
                     batch_instance['mask'] = torch.tensor(mask_list).to(self.config.device) 
-
-                n = len(new_labels)
-                new_matrix_labels = np.zeros((n, n), dtype=float)
-
-                # Fill the matrix according to the label comparison
-                for i1 in range(n):
-                    for j in range(n):
-                        if new_labels[i1] == new_labels[j]:
-                            new_matrix_labels[i1][j] = 1.0
-
-                new_matrix_labels_tensor = torch.tensor(new_matrix_labels).to(config.device)
                 
                 hidden = encoder(instance) # b, dim
                 # loss = self.moment.contrastive_loss(hidden, labels, is_memory)
@@ -169,56 +158,71 @@ class Manager(object):
                 rd = encoder(instance, is_rd=True) # b*num_gen_augment, dim
 
                 repeated_hidden = torch.repeat_interleave(hidden, repeats=repeats.to(hidden.device), dim=0) # b*num_gen_augment, dim
-                # print(f"repeat hidden size: {repeated_hidden.size()}\tlabels_des size: {labels_des.size()}\trd size: {rd.size()}")
-
-                # compute hard margin triplet loss: des vs hidden
-                online_contrastive_loss = HardMarginLoss()
-                d_s_loss = []
-                for idx in range(len(new_labels)):
-                    rep_des = labels_des[idx]
-                    label_for_loss = new_labels == new_labels[idx]
-                    d_s_loss.append(online_contrastive_loss(rep_des, repeated_hidden, label_for_loss))
-                d_s_loss = torch.stack(d_s_loss).mean()
-
-
-                # compute hard margin triplet loss: rd vs hidden
-                online_contrastive_loss = HardMarginLoss()
-                c_s_loss = []
-                for idx in range(len(new_labels)):
-                    rep_rd = rd[idx]
-                    label_for_loss = new_labels == new_labels[idx]
-                    c_s_loss.append(online_contrastive_loss(rep_rd, repeated_hidden, label_for_loss))
-                c_s_loss = torch.stack(c_s_loss).mean()
-
                 
-                # compute hard margin triplet loss: des vs rd
-                online_contrastive_loss = HardMarginLoss()
-                d_c_loss = []
-                for idx in range(len(new_labels)):
-                    rep_des = labels_des[idx]
-                    label_for_loss = new_labels == new_labels[idx]
-                    d_c_loss.append(online_contrastive_loss(rep_des, rd, label_for_loss))
-                d_c_loss = torch.stack(d_c_loss).mean()
+                hm_loss = 0.0
+
+                if self.config.hm:
+                    # compute hard margin triplet loss: des vs hidden
+                    online_contrastive_loss = HardMarginLoss()
+                    d_s_loss = []
+                    for idx in range(len(new_labels)):
+                        rep_des = labels_des[idx]
+                        label_for_loss = new_labels == new_labels[idx]
+                        d_s_loss.append(online_contrastive_loss(rep_des, repeated_hidden, label_for_loss))
+                    d_s_loss = torch.stack(d_s_loss).mean()
+
+
+                    # compute hard margin triplet loss: rd vs hidden
+                    online_contrastive_loss = HardMarginLoss()
+                    c_s_loss = []
+                    for idx in range(len(new_labels)):
+                        rep_rd = rd[idx]
+                        label_for_loss = new_labels == new_labels[idx]
+                        c_s_loss.append(online_contrastive_loss(rep_rd, repeated_hidden, label_for_loss))
+                    c_s_loss = torch.stack(c_s_loss).mean()
+
+                    
+                    # compute hard margin triplet loss: des vs rd
+                    online_contrastive_loss = HardMarginLoss()
+                    d_c_loss = []
+                    for idx in range(len(new_labels)):
+                        rep_des = labels_des[idx]
+                        label_for_loss = new_labels == new_labels[idx]
+                        d_c_loss.append(online_contrastive_loss(rep_des, rd, label_for_loss))
+                    d_c_loss = torch.stack(d_c_loss).mean()
+
+                    hm_loss = d_s_loss + c_s_loss + d_c_loss
                 
-        
-                # calculate loss factors per label
-                label_weights = torch.ones(len(new_labels)).to(self.config.device)
-                unique_labels, label_counts = torch.unique(labels, return_counts=True)
-                label_weights = 1.0 / label_counts[torch.searchsorted(unique_labels, labels)]
-                label_weights = label_weights / label_weights.sum() * len(labels)
-                label_weights = label_weights.to(self.config.device) # (b)
 
-                # compute mutual information loss: hidden vs des
-                loss_retrieval = MutualInformationLoss(weights=label_weights)
-                s_d_mi_loss = loss_retrieval(repeated_hidden, labels_des, new_matrix_labels_tensor)
+                mi_loss = 0.0
 
-                # compute mutual information loss: hidden vs rd
-                loss_retrieval = MutualInformationLoss(weights=label_weights)
-                s_c_mi_loss = loss_retrieval(repeated_hidden, rd, new_matrix_labels_tensor)
+                if self.config.mi:
 
-                # compute mutual information loss: des vs rd
-                loss_retrieval = MutualInformationLoss(weights=label_weights)
-                d_c_mi_loss = loss_retrieval(labels_des, rd, new_matrix_labels_tensor)
+                    # Use broadcasting to compute equality matrix in parallel
+                    new_matrix_labels_tensor = (new_labels.unsqueeze(1) == new_labels.unsqueeze(0)).float().to(self.config.device)
+
+                    # calculate loss factors per label
+                    label_weights = torch.ones(len(new_labels)).to(self.config.device)
+                    unique_labels, label_counts = torch.unique(new_labels, return_counts=True)
+                    label_weights = 1.0 / label_counts[torch.searchsorted(unique_labels, new_labels)]
+                    label_weights = label_weights / label_weights.sum() * len(new_labels)
+                    label_weights = label_weights.to(self.config.device) # (b)
+
+                    # print(f"repeat hidden size: {repeated_hidden.size()}\tlabels_des size: {labels_des.size()}\trd size: {rd.size()}\tlabel_weights size: {label_weights.size()}")
+
+                    # compute mutual information loss: hidden vs des
+                    loss_retrieval = MutualInformationLoss(weights=label_weights)
+                    s_d_mi_loss = loss_retrieval(repeated_hidden, labels_des, new_matrix_labels_tensor)
+
+                    # compute mutual information loss: hidden vs rd
+                    loss_retrieval = MutualInformationLoss(weights=label_weights)
+                    s_c_mi_loss = loss_retrieval(repeated_hidden, rd, new_matrix_labels_tensor)
+
+                    # compute mutual information loss: des vs rd
+                    loss_retrieval = MutualInformationLoss(weights=label_weights)
+                    d_c_mi_loss = loss_retrieval(labels_des, rd, new_matrix_labels_tensor)
+
+                    mi_loss = s_d_mi_loss + s_c_mi_loss + d_c_mi_loss
 
                 # compute soft margin triplet loss: hidden vs hidden
                 uniquie_labels = labels.unique()
@@ -227,7 +231,7 @@ class Manager(object):
                 else:
                     s_s_loss = 0.0
 
-                loss = 0.5*d_s_loss + 0.5*c_s_loss + 0.5*d_c_loss + 2*s_d_mi_loss + 2*s_c_mi_loss + 2*d_c_mi_loss + 1*s_s_loss
+                loss = 0.5*hm_loss + 2*mi_loss + 1*s_s_loss
 
                 loss.backward()
                 optimizer.step()
@@ -617,6 +621,12 @@ if __name__ == '__main__':
     # batch_size
     parser.add_argument("--batch_size", default=16, type=int)
 
+    # mi
+    parser.add_argument("--mi", action='store_true')
+
+    # hm
+    parser.add_argument("--hm", action='store_true')
+
     args = parser.parse_args()
     config = Config('config.ini')
     config.task_name = args.task_name
@@ -624,6 +634,8 @@ if __name__ == '__main__':
     config.num_gen = args.num_gen
     config.num_gen_augment = args.num_gen_augment
     config.batch_size = args.batch_size
+    config.mi = args.mi
+    config.hm = args.hm
 
     # config 
     print('#############params############')
