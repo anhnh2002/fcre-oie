@@ -47,4 +47,4 @@ CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k
 CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 10 >> tacred-5shot-10nga-bz32.log
 ```
 
-> Note: Configuration with 10 augmentations (num_gen_augment=10) is currently not available for batch size 32
+> Note: Configuration with 10 augmentations (num_gen_augment=10) is currently not available for batch size 32.
