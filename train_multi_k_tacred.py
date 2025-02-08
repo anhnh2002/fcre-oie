@@ -404,7 +404,7 @@ class Manager(object):
 
             for rel in current_relations:
                 
-                if rel in seen_relations and rel == self.id2rel[self.config.na_id]:
+                if rel in seen_des and rel == self.id2rel[self.config.na_id]:
                     continue
 
                 for augment_des in seen_descriptions[rel]:
