@@ -202,7 +202,7 @@ class Manager(object):
                 
         
                 # calculate loss factors per label
-                label_weights = torch.ones(len(labels)).to(self.config.device)
+                label_weights = torch.ones(len(new_labels)).to(self.config.device)
                 unique_labels, label_counts = torch.unique(labels, return_counts=True)
                 label_weights = 1.0 / label_counts[torch.searchsorted(unique_labels, labels)]
                 label_weights = label_weights / label_weights.sum() * len(labels)
