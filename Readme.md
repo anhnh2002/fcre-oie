@@ -48,3 +48,37 @@ CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k
 ```
 
 > Note: Configuration with 10 augmentations (num_gen_augment=10) is currently not available for batch size 32.
+
+## Tuning loss weights bz32 1 augmentation
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 1 --w1 2.0 --w2 2.0 --w3 2.0 >> tacred-5shot-1nga-bz32-202020.log
+```
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 1 --w1 2.0 --w2 2.0 --w3 0.5 >> tacred-5shot-1nga-bz32-202005.log
+```
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 1 --w1 2.0 --w2 0.5 --w3 2.0 >> tacred-5shot-1nga-bz32-200520.log
+```
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 1 --w1 0.5 --w2 2.0 --w3 2.0 >> tacred-5shot-1nga-bz32-052020.log
+```
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 1 --w1 2.0 --w2 0.5 --w3 0.5 >> tacred-5shot-1nga-bz32-200505.log
+```
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 1 --w1 0.5 --w2 2.0 --w3 0.5 >> tacred-5shot-1nga-bz32-052005.log
+```
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 1 --w1 0.5 --w2 0.5 --w3 2.0 >> tacred-5shot-1nga-bz32-050520.log
+```
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 1 --w1 0.5 --w2 0.5 --w3 0.5 >> tacred-5shot-1nga-bz32-050505.log
+```

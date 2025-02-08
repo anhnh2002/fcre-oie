@@ -72,7 +72,7 @@ import json
 with open("./data/CFRLFewRel/relation_name.txt") as f:
     relation_names = f.readlines()
 
-k = 3
+k = 10
 
 # process and save to txt file line by line
 with open(f"./data/CFRLFewRel/CFRLdata_10_100_10_5/train_0_{k}.txt", "w") as f:
