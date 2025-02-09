@@ -80,3 +80,20 @@ CUDA_VISIBLE_DEVICES=0 python train.py --task_name FewRel --num_k 5 --num_gen 5 
 # 10 augmentations
 CUDA_VISIBLE_DEVICES=0 python train.py --task_name FewRel --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 10 --w1 2.0 --w2 2.0 --w3 0.5 >> fewrel-5shot-10nga-bz32-202005.log
 ```
+
+
+# Baselines
+
+## CPL-MI
+
+```bash
+cd baselines/CPL-MI
+```
+
+Create `.env` file and put `OPENAI_API_KEY=` on it
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python train.py --task_name Tacred --num_k 5 --num_gen 5 >> tacred-5shot-bz32-k5-g5-mi.log
+
+CUDA_VISIBLE_DEVICES=1 python train.py --task_name FewRel --num_k 5 --num_gen 2 >> fewrel-5shot-bz32-k5-g2-mi.log
+```

@@ -110,6 +110,11 @@ class Manager(object):
                     instance[k] = instance[k].to(self.config.device)
                 hidden = encoder(instance)
                 loss = self.moment.contrastive_loss(hidden, labels, is_memory)
+                if torch.isnan(loss):
+                    print('loss is nan')
+                    loss = 0.0
+                    continue
+
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
