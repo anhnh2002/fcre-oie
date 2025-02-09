@@ -140,7 +140,7 @@ class Manager(object):
                     print('loss is nan')
                     loss = 0.0
                 
-                if torch.isnan(infoNCE_loss):
+                if infoNCE_loss != 0 and torch.isnan(infoNCE_loss):
                     print('infoNCE_loss is nan')
                     infoNCE_loss = 0.0
 
