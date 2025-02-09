@@ -78,3 +78,4 @@ mother
 member of
 child
 main subject
+NA or unknown
