@@ -86,14 +86,33 @@ CUDA_VISIBLE_DEVICES=0 python train.py --task_name FewRel --num_k 5 --num_gen 5 
 
 ## CPL-MI
 
+### Setup
+
+1. Navigate to the CPL-MI directory:
 ```bash
 cd baselines/CPL-MI
 ```
 
-Create `.env` file and put `OPENAI_API_KEY=` on it
-
+2. Create environment file:
 ```bash
-CUDA_VISIBLE_DEVICES=0 python train.py --task_name Tacred --num_k 5 --num_gen 5 >> tacred-5shot-bz32-k5-g5-mi.log
+echo "OPENAI_API_KEY=your_api_key_here" > .env
+```
 
-CUDA_VISIBLE_DEVICES=1 python train.py --task_name FewRel --num_k 5 --num_gen 2 >> fewrel-5shot-bz32-k5-g2-mi.log
+
+#### TACRED Dataset
+```bash
+CUDA_VISIBLE_DEVICES=0 python train.py \
+    --task_name Tacred \
+    --num_k 5 \
+    --num_gen 5 \
+    >> logs/tacred-5shot-bz32-k5-g5-mi.log
+```
+
+#### FewRel Dataset
+```bash
+CUDA_VISIBLE_DEVICES=1 python train.py \
+    --task_name FewRel \
+    --num_k 5 \
+    --num_gen 2 \
+    >> logs/fewrel-5shot-bz32-k5-g2-mi.log
 ```
