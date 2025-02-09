@@ -146,6 +146,9 @@ class Manager(object):
 
                 loss = 0.8*loss + infoNCE_loss
 
+                if loss == 0:
+                    continue
+
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
