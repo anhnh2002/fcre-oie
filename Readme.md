@@ -85,16 +85,16 @@ CUDA_VISIBLE_DEVICES=0 python train.py --task_name FewRel --num_k 5 --num_gen 5 
 
 ```bash
 # wo s_d
-CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 0.0 --w2 2.0 --w3 0.5 >> tacred-5shot-3nga-bz32-wo_s_d.log
+CUDA_VISIBLE_DEVICES=0 python train.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 0.0 --w2 2.0 --w3 0.5 >> tacred-5shot-3nga-bz32-wo_s_d.log
 
 # wo s_c
-CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 2.0 --w2 0.0 --w3 0.5 >> tacred-5shot-5nga-bz32-wo_s_c.log
+CUDA_VISIBLE_DEVICES=0 python train.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 2.0 --w2 0.0 --w3 0.5 >> tacred-5shot-5nga-bz32-wo_s_c.log
 
 # wo d_c
-CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 2.0 --w2 2.0 --w3 0.0 >> tacred-5shot-7nga-bz32-wo_d_c.log
+CUDA_VISIBLE_DEVICES=0 python train.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 2.0 --w2 2.0 --w3 0.0 >> tacred-5shot-7nga-bz32-wo_d_c.log
 
 # wo HSMT
-CUDA_VISIBLE_DEVICES=0 python train_multi_k_tacred.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 2.0 --w2 2.0 --w3 0.5 --w4 0.0 >> tacred-5shot-1nga-bz32-wo_hsmt.log
+CUDA_VISIBLE_DEVICES=0 python train.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 2.0 --w2 2.0 --w3 0.5 --w4 0.0 >> tacred-5shot-1nga-bz32-wo_hsmt.log
 ```
 
 # Baselines
@@ -130,4 +130,30 @@ CUDA_VISIBLE_DEVICES=1 python train.py \
     --num_k 5 \
     --num_gen 2 \
     >> logs/fewrel-5shot-bz32-k5-g2-mi.log
+```
+
+## SCKD
+
+### Setup
+
+1. Navigate to the SCKD directory:
+```bash
+cd baselines/SCKD
+```
+
+
+#### TACRED Dataset
+```bash
+CUDA_VISIBLE_DEVICES=0 python main.py \
+    --task Tacred \
+    --shot 5 \
+    >> tacred-5shot-bz64.log
+```
+
+#### FewRel Dataset
+```bash
+CUDA_VISIBLE_DEVICES=1 python main.py \
+    --task FewRel \
+    --shot 5 \
+    >> tacred-5shot-bz64.log
 ```
