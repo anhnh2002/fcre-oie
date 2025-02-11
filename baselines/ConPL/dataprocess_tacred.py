@@ -1508,7 +1508,6 @@ class data_sampler_bert_prompt_deal_first_task(object):
 
         ##load relation
         self.relation_names, self.id2rel = self._read_relations(config['relation_file'])
-        print('relation_file', config["relation_file"])
         self.id2rel_pattern = {}
         for i in self.id2rel:
             tokens, fakefirstent, fakefirstindex, fakesecondent, fakesecondindex, fakeheadid, faketailid, rawtext, length, fakelabel, mask = self._transfrom_sentence(self.id2rel[i])
@@ -1517,10 +1516,7 @@ class data_sampler_bert_prompt_deal_first_task(object):
         self.cluster_labels = {}
         self.rel_features = {}
         rel_index = np.load("data/tacred/rel_index.npy")
-        #print(rel_index)
-        #rel_cluster_label = np.load("data/fewrel/rel_cluster_label.npy")
         rel_cluster_label = np.load(config["rel_cluster_label"])
-        print("rel_cluster_label", config["rel_cluster_label"])
         rel_feature = np.load("data/tacred/rel_feature.npy")
         for index, i in enumerate(rel_index):
             self.cluster_labels[i] = rel_cluster_label[index]
@@ -1696,6 +1692,7 @@ class data_sampler_bert_prompt_deal_first_task(object):
     def _transform_questions(self, data):
         err = 0
         for sample in data:
+            #[relation_ix, candidate_ixs, question, firstent, firstentindex, secondent, secondentindex, headid, tailid]
             originaltext = sample[2]
             h_pos_li = sample[4]
             t_pos_li = sample[6]
@@ -1948,14 +1945,6 @@ class data_set_bert_prompt(Dataset):
             labels,
             neg_labels,
             sentences,
-            firstent,
-            firstentindex,
-            secondent,
-            secondentindex,
-            headid,
-            tailid,
-            rawtext,
-            lenghts,
             typelabels,
             masks,
             mask_pos

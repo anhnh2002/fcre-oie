@@ -129,6 +129,8 @@ class Manager(object):
         for i in range(epoch):
             for batch_num, (instance, labels, ind) in enumerate(data_loader):
 
+                optimizer.zero_grad()
+
                 # if batch_num == 5:
                 #     break
                 

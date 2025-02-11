@@ -39,3 +39,4 @@ person other family
 person city of death
 person stateorprovince of death
 organization founded by
+NA or unknown

@@ -85,7 +85,7 @@ CUDA_VISIBLE_DEVICES=0 python train.py --task_name FewRel --num_k 5 --num_gen 5 
 
 ```bash
 # wo s_d
-CUDA_VISIBLE_DEVICES=0 python train.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 0.0 --w2 2.0 --w3 0.5 >> tacred-5shot-3nga-bz32-wo_s_d.log
+CUDA_VISIBLE_DEVICES=0 python train.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 0.0 --w2 2.0 --w3 0.5 >> tacred-5shot-3ddunga-bz32-wo_s_d.log
 
 # wo s_c
 CUDA_VISIBLE_DEVICES=0 python train.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 2.0 --w2 0.0 --w3 0.5 >> tacred-5shot-5nga-bz32-wo_s_c.log

@@ -24,7 +24,7 @@ def eval_model(config, basemodel, test_set, mem_relations):
     allnum= 0.0
     correctnum = 0.0
 
-    for step, (labels, neg_labels, sentences, firstent, firstentindex, secondent, secondentindex, headid, tailid, rawtext, lengths,
+    for step, (labels, neg_labels, sentences,
                typelabels, masks, mask_pos) in enumerate(test_dataloader):
 
         sentences = sentences.to(config['device'])
@@ -61,7 +61,7 @@ def get_memory(config, model, proto_set):
         rangeset.append(rangeset[-1] + len(i))
     data_loader = get_data_loader_bert_prompt(config, memset, False, False)
     features = []
-    for step, (labels, neg_labels, sentences, firstent, firstentindex, secondent, secondentindex, headid, tailid, rawtext, lengths,
+    for step, (labels, neg_labels, sentences,
                typelabels, masks, mask_pos) in enumerate(data_loader):
         sentences = sentences.to(config['device'])
         masks = masks.to(config['device'])
@@ -92,7 +92,7 @@ def select_data(mem_set, proto_memory, config, model, divide_train_set, num_sel_
         thisdataset = divide_train_set[thisrel]
         data_loader = get_data_loader_bert_prompt(config, thisdataset, False, False)
         features = []
-        for step, (labels, neg_labels, sentences, firstent, firstentindex, secondent, secondentindex, headid, tailid, rawtext, lengths,
+        for step, (labels, neg_labels, sentences,
                 typelabels, masks, mask_pos) in enumerate(data_loader):
             sentences = sentences.to(config['device'])
             masks = masks.to(config['device'])
@@ -240,7 +240,7 @@ def train_model_with_hard_neg(config, model, mem_set, traindata, epochs, current
         else:
             lossesfactor5 = 0.0
         lossesfactor6 = 0.0
-        for step, (labels, neg_labels, sentences, firstent, firstentindex, secondent, secondentindex, headid, tailid, rawtext, lengths,
+        for step, (labels, neg_labels, sentences,
             typelabels, masks, mask_pos) in enumerate(data_loader):
             model.zero_grad()
             labels = labels.to(config['device'])
@@ -353,8 +353,8 @@ def train_memory(config, model, mem_set, train_set, epochs, current_proto, origi
         lossesfactor5 = 1.0
         lossesfactor6 = 1.0
 
-        for step, (labels, neg_labels, sentences, firstent, firstentindex, secondent, secondentindex, headid, tailid, rawtext,
-                   lengths, typelabels, masks, mask_pos) in enumerate(tqdm(data_loader)):
+        for step, (labels, neg_labels, sentences,
+                   typelabels, masks, mask_pos) in enumerate(tqdm(data_loader)):
             model.zero_grad()
             sentences = sentences.to(config['device'])
             masks = masks.to(config['device'])
