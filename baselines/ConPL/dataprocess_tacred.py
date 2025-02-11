@@ -1926,21 +1926,11 @@ class data_set_bert_prompt(Dataset):
         labels = torch.tensor([item[0] for item in data])
         neg_labels = [torch.tensor(item[1]) for item in data]
         sentences = torch.stack([torch.tensor(item[2]) for item in data]) #
-        #print(sentences.shape)
-        #print(sentences)
-        firstent = [torch.tensor(item[3]) for item in data]
-        firstentindex = [torch.tensor(item[4]) for item in data]
-        secondent = [torch.tensor(item[5]) for item in data]
-        secondentindex = [torch.tensor(item[6]) for item in data]
-        headid = [item[7] for item in data]
-        tailid = [item[8] for item in data]
-        rawtext = [item[9] for item in data]
-        lenghts = [torch.tensor(item[10]) for item in data]
+
         typelabels =  torch.tensor([item[11] for item in data])
         masks = torch.stack([torch.tensor(item[12]) for item in data]) #
         mask_pos = torch.tensor([item[13] for item in data]) #
-        #print(masks.shape)
-        #print(masks)
+
         return (
             labels,
             neg_labels,

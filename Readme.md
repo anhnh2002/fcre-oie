@@ -147,7 +147,7 @@ cd baselines/SCKD
 CUDA_VISIBLE_DEVICES=0 python main.py \
     --task Tacred \
     --shot 5 \
-    >> tacred-5shot-bz64.log
+    >> tacred-5shot-bz256.log
 ```
 
 #### FewRel Dataset
@@ -155,5 +155,5 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 CUDA_VISIBLE_DEVICES=1 python main.py \
     --task FewRel \
     --shot 5 \
-    >> tacred-5shot-bz64.log
+    >> tacred-5shot-bz256.log
 ```
