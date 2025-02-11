@@ -21,9 +21,9 @@ class data_sampler(object):
 
         # read na data
         self.na_id = self.config.na_id
-        self.training_na_data = self.load_na_data(self.config.training_data)
-        self.valid_na_data = self.load_na_data(self.config.valid_data)
-        self.test_na_data = self.load_na_data(self.config.test_data)
+        self.training_na_data = self.load_na_data(self.config.training_file)
+        self.valid_na_data = self.load_na_data(self.config.valid_file)
+        self.test_na_data = self.load_na_data(self.config.test_file)
         self.na_rel = self.id2rel[self.na_id]
 
         self.task_length = config.task_length

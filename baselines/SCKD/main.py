@@ -15,6 +15,8 @@ from sklearn.cluster import KMeans
 import collections
 from copy import deepcopy
 import os
+from sklearn.metrics import f1_score
+from tqdm import tqdm
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 
@@ -100,7 +102,7 @@ def train_first(config, encoder, dropout_layer, classifier, training_data, epoch
     dropout_layer.train()
     classifier.train()
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(reduction='none')
     optimizer = optim.Adam([
         {'params': encoder.parameters(), 'lr': 0.00001},
         {'params': dropout_layer.parameters(), 'lr': 0.00001},
@@ -109,7 +111,12 @@ def train_first(config, encoder, dropout_layer, classifier, training_data, epoch
     triplet_loss = nn.TripletMarginLoss(margin=1.0, p=2)
     for epoch_i in range(epochs):
         losses = []
-        for step, (labels, _, tokens) in enumerate(data_loader):
+        step = 0
+        for labels, _, tokens in tqdm(data_loader):
+
+            # step += 1
+            # if step == 5:
+            #     break
 
             optimizer.zero_grad()
 
@@ -133,10 +140,17 @@ def train_first(config, encoder, dropout_layer, classifier, training_data, epoch
             anchors = outputs
             logits_all = torch.stack(logits_all)
             m_labels = labels.expand((config.f_pass, labels.shape[0]))  # m,B
-            loss1 = criterion(logits_all.reshape(-1, logits_all.shape[-1]), m_labels.reshape(-1))
+
+            label_weights = torch.ones(len(m_labels.reshape(-1))).to(config.device)
+            unique_labels, label_counts = torch.unique(m_labels.reshape(-1), return_counts=True)
+            label_weights = 1.0 / label_counts[torch.searchsorted(unique_labels, m_labels.reshape(-1))]
+            label_weights = label_weights / label_weights.sum() * len(m_labels.reshape(-1))
+            label_weights = label_weights.to(config.device) # (b)
+
+            loss1: torch.Tensor = criterion(logits_all.reshape(-1, logits_all.shape[-1]), m_labels.reshape(-1)) * label_weights
             loss2 = compute_jsd_loss(logits_all)
             tri_loss = triplet_loss(anchors, positives, negatives)
-            loss = loss1 + loss2 + tri_loss
+            loss = loss1.mean() + loss2 + tri_loss
 
             loss.backward()
             losses.append(loss.item())
@@ -152,7 +166,7 @@ def train_mem_model(config, encoder, dropout_layer, classifier, training_data, e
     dropout_layer.train()
     classifier.train()
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(reduction='none')
     optimizer = optim.Adam([
         {'params': encoder.parameters(), 'lr': 0.00001},
         {'params': dropout_layer.parameters(), 'lr': 0.00001},
@@ -163,7 +177,12 @@ def train_mem_model(config, encoder, dropout_layer, classifier, training_data, e
     T = config.kl_temp
     for epoch_i in range(epochs):
         losses = []
-        for step, (labels, _, tokens) in enumerate(data_loader):
+        step = 0
+        for labels, _, tokens in tqdm(data_loader):
+            
+            # step += 1
+            # if step == 5:
+            #     break
 
             optimizer.zero_grad()
 
@@ -192,10 +211,17 @@ def train_mem_model(config, encoder, dropout_layer, classifier, training_data, e
             anchors = outputs
             logits_all = torch.stack(logits_all)
             m_labels = labels.expand((config.f_pass, labels.shape[0]))  # m,B
-            loss1 = criterion(logits_all.reshape(-1, logits_all.shape[-1]), m_labels.reshape(-1))
+
+            label_weights = torch.ones(len(m_labels.reshape(-1))).to(config.device)
+            unique_labels, label_counts = torch.unique(m_labels.reshape(-1), return_counts=True)
+            label_weights = 1.0 / label_counts[torch.searchsorted(unique_labels, m_labels.reshape(-1))]
+            label_weights = label_weights / label_weights.sum() * len(m_labels.reshape(-1))
+            label_weights = label_weights.to(config.device) # (b)
+
+            loss1: torch.Tensor = criterion(logits_all.reshape(-1, logits_all.shape[-1]), m_labels.reshape(-1)) * label_weights
             loss2 = compute_jsd_loss(logits_all)
             tri_loss = triplet_loss(anchors, positives, negatives)
-            loss = loss1 + loss2 + tri_loss
+            loss = loss1.mean() + loss2 + tri_loss
 
             if prev_encoder is not None:
                 prev_reps = prev_encoder(tokens).detach()
@@ -259,6 +285,32 @@ def batch2device(batch_tuple, device):
             ans.append(var)
     return ans
 
+def f1(preds, labels, na_tempid):
+    unique_labels = set(preds + labels)
+    if na_tempid in unique_labels:
+        unique_labels.remove(na_tempid)
+    
+    unique_labels = list(unique_labels)
+
+    # Calculate F1 score for each class separately
+    f1_per_class = f1_score(preds, labels, average=None)
+
+    # Calculate micro-average F1 score
+    f1_micro = f1_score(preds, labels, average='micro', labels=unique_labels)
+
+    # Calculate macro-average F1 score
+    # f1_macro = f1_score(preds, labels, average='macro', labels=unique_labels)
+
+    # Calculate weighted-average F1 score
+    f1_weighted = f1_score(preds, labels, average='weighted', labels=unique_labels)
+
+    print("F1 score per class:", dict(zip(unique_labels, f1_per_class)))
+    print("Micro-average F1 score:", f1_micro)
+    # print("Macro-average F1 score:", f1_macro)
+    print("Weighted-average F1 score:", f1_weighted)
+
+    return f1_micro
+
 
 def evaluate_strict_model(config, encoder, dropout_layer, classifier, test_data, seen_relations, map_relid2tempid):
     data_loader = get_data_loader(config, test_data, batch_size=1)
@@ -267,12 +319,17 @@ def evaluate_strict_model(config, encoder, dropout_layer, classifier, test_data,
     classifier.eval()
     n = len(test_data)
 
-    correct = 0
-    for step, batch_data in enumerate(data_loader):
+    # find tempid for na_id
+    na_tempid = map_relid2tempid[config.na_id]
+    total_labels = []
+    total_preds = []
+
+    for batch_data in tqdm(data_loader):
         labels, _, tokens = batch_data
         labels = labels.to(config.device)
         labels = [map_relid2tempid[x.item()] for x in labels]
         labels = torch.tensor(labels).to(config.device)
+        total_labels.extend(labels.cpu().tolist())
 
         tokens = torch.stack([x.to(config.device) for x in tokens],dim=0)
         reps = encoder(tokens)
@@ -282,14 +339,12 @@ def evaluate_strict_model(config, encoder, dropout_layer, classifier, test_data,
         seen_relation_ids = [rel2id[relation] for relation in seen_relations]
         seen_relation_ids = [map_relid2tempid[relation] for relation in seen_relation_ids]
         seen_sim = logits[:,seen_relation_ids].cpu().data.numpy()
-        max_smi = np.max(seen_sim,axis=1)
 
-        label_smi = logits[:,labels].cpu().data.numpy()
+        # get prediction
+        preds = np.argmax(seen_sim, axis=1)
+        total_preds.extend(preds)
 
-        if label_smi >= max_smi:
-            correct += 1
-
-    return correct/n
+    return f1(total_preds, total_labels, na_tempid)
 
 
 def select_data(config, encoder, dropout_layer, relation_dataset):
@@ -297,7 +352,7 @@ def select_data(config, encoder, dropout_layer, relation_dataset):
     features = []
     encoder.eval()
     dropout_layer.eval()
-    for step, batch_data in enumerate(data_loader):
+    for batch_data in tqdm(data_loader):
         labels, _, tokens = batch_data
         tokens = torch.stack([x.to(config.device) for x in tokens],dim=0)
         with torch.no_grad():
@@ -321,7 +376,7 @@ def get_proto(config, encoder, dropout_layer, relation_dataset):
     features = []
     encoder.eval()
     dropout_layer.eval()
-    for step, batch_data in enumerate(data_loader):
+    for batch_data in tqdm(data_loader):
         labels, _, tokens = batch_data
         tokens = torch.stack([x.to(config.device) for x in tokens],dim=0)
         with torch.no_grad():
@@ -349,7 +404,7 @@ def generate_current_relation_data(config, encoder, dropout_layer, relation_data
     relation_data = []
     encoder.eval()
     dropout_layer.eval()
-    for step, batch_data in enumerate(data_loader):
+    for batch_data in tqdm(data_loader):
         labels, _, tokens = batch_data
         tokens = torch.stack([x.to(config.device) for x in tokens],dim=0)
         with torch.no_grad():
@@ -434,7 +489,7 @@ def data_augmentation(config, encoder, train_data, prev_train_data):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", default="tacred", type=str)
-    parser.add_argument("--shot", default=10, type=str)
+    parser.add_argument("--shot", default=10, type=int)
     parser.add_argument('--config', default='config.ini')
     args = parser.parse_args()
     config = Config(args.config)
@@ -488,22 +543,18 @@ if __name__ == '__main__':
             config.test_file = "data/tacred/CFRLdata_10_100_10_10/test_0.txt"
 
     result_cur_test = []
-    result_whole_test = []
-    bwt_whole = []
-    fwt_whole = []
-    X = []
-    Y = []
-    relation_divides = []
-    for i in range(10):
-        relation_divides.append([])
+    result_whole_test_wo_na = []
+    result_whole_test_w_na = []
+
     for rou in range(config.total_round):
         test_cur = []
-        test_total = []
+        test_total_wo_na = []
+        test_total_w_na = []
         random.seed(config.seed+rou*100)
         sampler = data_sampler(config=config, seed=config.seed+rou*100)
         id2rel = sampler.id2rel
         rel2id = sampler.rel2id
-        id2sentence = sampler.get_id2sent()
+
         encoder = Bert_Encoder(config=config).to(config.device)
         dropout_layer = Dropout_Layer(config=config).to(config.device)
         num_class = len(sampler.id2rel)
@@ -526,10 +577,9 @@ if __name__ == '__main__':
             train_data_for_initial = []
             count = 0
             for relation in current_relations:
-                history_relations.append(relation)
+                if relation not in history_relations:
+                    history_relations.append(relation)
                 train_data_for_initial += training_data[relation]
-                relation_divides[count].append(float(rel2id[relation]))
-                count += 1
 
 
             temp_rel2id = [rel2id[x] for x in seen_relations]
@@ -553,13 +603,6 @@ if __name__ == '__main__':
                 proto, _ = get_proto(config, encoder, dropout_layer, memorized_samples[relation])
                 temp_protos[rel2id[relation]] = proto
 
-            test_data_1 = []
-            for relation in current_relations:
-                test_data_1 += test_data[relation]
-
-            if steps != 0:
-                forward_acc = evaluate_strict_model(config, prev_encoder, prev_dropout_layer, classifier, test_data_1, seen_relations, map_relid2tempid)
-                forward_accs.append(forward_acc)
 
             train_simple_model(config, encoder, dropout_layer, classifier, train_data_for_initial, config.step1_epochs, map_relid2tempid)
             print(f"simple finished")
@@ -582,12 +625,8 @@ if __name__ == '__main__':
             for relation in current_relations:
                 new_relation_data[rel2id[relation]].extend(generate_current_relation_data(config, encoder,dropout_layer,training_data[relation]))
 
-            expanded_train_data_for_initial, expanded_prev_samples = data_augmentation(config, encoder,
-                                                                                       train_data_for_initial,
-                                                                                       prev_samples)
             torch.cuda.empty_cache()
             print(len(train_data_for_initial))
-            print(len(expanded_train_data_for_initial))
 
 
             train_mem_model(config, encoder, dropout_layer, classifier, train_data_for_initial, config.step2_epochs, map_relid2tempid, new_relation_data,
@@ -614,80 +653,66 @@ if __name__ == '__main__':
             train_mem_model(config, encoder, dropout_layer, classifier, train_data_for_memory, config.step3_epochs, map_relid2tempid, new_relation_data,
                         prev_encoder, prev_dropout_layer, prev_classifier, prev_relation_index)
             print(f"memory finished")
-            test_data_1 = []
+
+            # wo na
+            test_data_1_wo_na = []
             for relation in current_relations:
-                test_data_1 += test_data[relation]
+                if relation != id2rel[config.na_id]:
+                    test_data_1_wo_na += test_data[relation]
 
-            test_data_2 = []
+            test_data_2_wo_na = []
             for relation in seen_relations:
-                test_data_2 += historic_test_data[relation]
-            history_data.append(test_data_1)
+                if relation != id2rel[config.na_id]:
+                    test_data_2_wo_na += historic_test_data[relation]
+            history_data.append(test_data_1_wo_na)
 
+            total_acc_wo_na = evaluate_strict_model(config, encoder, dropout_layer, classifier, test_data_2_wo_na, seen_relations, map_relid2tempid)
 
-            print(len(test_data_1))
-            print(len(test_data_2))
-            # cur_acc = evaluate_strict_model(config, encoder, classifier, test_data_1, seen_relations, map_relid2tempid)
-            # total_acc = evaluate_strict_model(config, encoder, classifier, test_data_2, seen_relations, map_relid2tempid)
+            # w na
+            test_data_1_w_na = []
+            for relation in current_relations:
+                test_data_1_w_na += test_data[relation]
 
-            cur_acc = evaluate_strict_model(config, encoder,dropout_layer,classifier, test_data_1, seen_relations, map_relid2tempid)
-            total_acc = evaluate_strict_model(config, encoder, dropout_layer, classifier, test_data_2, seen_relations, map_relid2tempid)
+            test_data_2_w_na = []
+            for relation in seen_relations:
+                test_data_2_w_na += historic_test_data[relation]
+            history_data.append(test_data_1_w_na)
+
+            total_acc_w_na = evaluate_strict_model(config, encoder, dropout_layer, classifier, test_data_2_w_na, seen_relations, map_relid2tempid)
 
             print(f'Restart Num {rou + 1}')
             print(f'task--{steps + 1}:')
-            print(f'current test acc:{cur_acc}')
-            print(f'history test acc:{total_acc}')
-            test_cur.append(cur_acc)
-            test_total.append(total_acc)
-            print(test_cur)
-            print(test_total)
-            accuracy = []
-            temp_rel2id = [rel2id[x] for x in history_relations]
-            map_relid2tempid = {k: v for v, k in enumerate(temp_rel2id)}
-            for data in history_data:
-                # accuracy.append(
-                #     evaluate_strict_model(config, encoder, classifier, data, history_relations, map_relid2tempid))
-                accuracy.append(evaluate_strict_model(config, encoder, dropout_layer, classifier, data, seen_relations, map_relid2tempid))
-            print(accuracy)
+            print(f'history test acc wo na:{total_acc_wo_na}')
+            print(f'history test acc w na:{total_acc_w_na}')
+
+            test_total_wo_na.append(total_acc_wo_na)
+            print("test_total_wo_na: ", test_total_wo_na)
+
+            test_total_w_na.append(total_acc_w_na)
+            print("test_total_w_na: ", test_total_w_na)
 
             prev_encoder = deepcopy(encoder)
             prev_dropout_layer = deepcopy(dropout_layer)
             prev_classifier = deepcopy(classifier)
             torch.cuda.empty_cache()
-        result_cur_test.append(np.array(test_cur))
-        result_whole_test.append(np.array(test_total)*100)
-        print("result_whole_test")
-        print(result_whole_test)
-        avg_result_cur_test = np.average(result_cur_test, 0)
-        avg_result_all_test = np.average(result_whole_test, 0)
-        print("avg_result_cur_test")
-        print(avg_result_cur_test)
-        print("avg_result_all_test")
-        print(avg_result_all_test)
-        std_result_all_test = np.std(result_whole_test, 0)
-        print("std_result_all_test")
-        print(std_result_all_test)
+            
+        # wo na
+        result_whole_test_wo_na.append(np.array(test_total_wo_na)*100)
+        print("result_whole_test wo na: ", result_whole_test_wo_na)
+        avg_result_all_test_wo_na = np.average(result_whole_test_wo_na, 0)
 
-        accuracy = []
-        temp_rel2id = [rel2id[x] for x in history_relations]
-        map_relid2tempid = {k: v for v, k in enumerate(temp_rel2id)}
-        for data in history_data:
-            accuracy.append(evaluate_strict_model(config, encoder, dropout_layer, classifier, data, history_relations, map_relid2tempid))
-        print(accuracy)
-        bwt = 0.0
-        for k in range(len(accuracy)-1):
-            bwt += accuracy[k]-test_cur[k]
-        bwt /= len(accuracy)-1
-        bwt_whole.append(bwt)
-        fwt_whole.append(np.average(np.array(forward_accs)))
-        print("bwt_whole")
-        print(bwt_whole)
-        print("fwt_whole")
-        print(fwt_whole)
-        avg_bwt = np.average(np.array(bwt_whole))
-        print("avg_bwt_whole")
-        print(avg_bwt)
-        avg_fwt = np.average(np.array(fwt_whole))
-        print("avg_fwt_whole")
-        print(avg_fwt)
+        print("avg_result_all_test wo na: ", avg_result_all_test_wo_na)
+        std_result_all_test_wo_na = np.std(result_whole_test_wo_na, 0)
+        print("std_result_all_test wo na: ", std_result_all_test_wo_na)
+
+        # w na
+        result_whole_test_w_na.append(np.array(test_total_w_na)*100)
+        print("result_whole_test w na: ", result_whole_test_w_na)
+        avg_result_all_test_w_na = np.average(result_whole_test_w_na, 0)
+
+        print("avg_result_all_test w na: ", avg_result_all_test_w_na)
+        std_result_all_test_w_na = np.std(result_whole_test_w_na, 0)
+        print("std_result_all_test w na: ", std_result_all_test_w_na)
+
 
 
