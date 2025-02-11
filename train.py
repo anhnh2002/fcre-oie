@@ -172,27 +172,37 @@ class Manager(object):
                 # print(f"repeat hidden size: {repeated_hidden.size()}\tlabels_des size: {labels_des.size()}\trd size: {rd.size()}\tlabel_weights size: {label_weights.size()}")
 
                 # compute mutual information loss: hidden vs des
-                loss_retrieval = MutualInformationLoss(weights=label_weights)
-                s_d_mi_loss = loss_retrieval(repeated_hidden, labels_des, new_matrix_labels_tensor)
+                if self.config.w1 != 0:
+                    loss_retrieval = MutualInformationLoss(weights=label_weights)
+                    s_d_mi_loss = loss_retrieval(repeated_hidden, labels_des, new_matrix_labels_tensor)
+                else:
+                    s_d_mi_loss = 0.0
 
                 # compute mutual information loss: hidden vs rd
-                loss_retrieval = MutualInformationLoss(weights=label_weights)
-                s_c_mi_loss = loss_retrieval(repeated_hidden, rd, new_matrix_labels_tensor)
+                if self.config.w2 != 0:
+                    loss_retrieval = MutualInformationLoss(weights=label_weights)
+                    s_c_mi_loss = loss_retrieval(repeated_hidden, rd, new_matrix_labels_tensor)
+                else:
+                    s_c_mi_loss = 0.0
 
                 # compute mutual information loss: des vs rd
-                loss_retrieval = MutualInformationLoss(weights=label_weights)
-                d_c_mi_loss = loss_retrieval(labels_des, rd, new_matrix_labels_tensor)
-
-                
+                if self.config.w3 != 0:
+                    loss_retrieval = MutualInformationLoss(weights=label_weights)
+                    d_c_mi_loss = loss_retrieval(labels_des, rd, new_matrix_labels_tensor)
+                else:
+                    d_c_mi_loss = 0.0
 
                 # compute soft margin triplet loss: hidden vs hidden
                 uniquie_labels = labels.unique()
-                if len(uniquie_labels) > 1:
+                if len(uniquie_labels) > 1 and self.config.w4 != 0:
                     s_s_loss = soft_margin_loss(hidden, labels.to(self.config.device))
                 else:
                     s_s_loss = 0.0
 
-                loss = self.config.w1*s_d_mi_loss + self.config.w2*s_c_mi_loss + self.config.w3*d_c_mi_loss + 1*s_s_loss
+                loss = self.config.w1*s_d_mi_loss + self.config.w2*s_c_mi_loss + self.config.w3*d_c_mi_loss + self.config.w4*s_s_loss
+
+                if loss == 0:
+                    continue
 
                 loss.backward()
                 optimizer.step()
@@ -595,6 +605,9 @@ if __name__ == '__main__':
     # loss weight 3
     parser.add_argument("--w3", default=2.0, type=float)
 
+    # loss weight 4
+    parser.add_argument("--w4", default=1.0, type=float)
+
     args = parser.parse_args()
     config = Config('config.ini')
     config.task_name = args.task_name
@@ -605,6 +618,7 @@ if __name__ == '__main__':
     config.w1 = args.w1
     config.w2 = args.w2
     config.w3 = args.w3
+    config.w4 = args.w4
 
     # config 
     print('#############params############')

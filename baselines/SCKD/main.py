@@ -455,7 +455,7 @@ if __name__ == '__main__':
         config.rel_index = "data/fewrel/rel_index.npy"
         config.rel_feature = "data/fewrel/rel_feature.npy"
         config.rel_des_file = "data/fewrel/relation_description.txt"
-        config.num_of_relation = 80
+        config.na_id = 80
         if config.shot == 5:
             config.rel_cluster_label = "data/fewrel/CFRLdata_10_100_10_5/rel_cluster_label_0.npy"
             config.training_file = "data/fewrel/CFRLdata_10_100_10_5/train_0.txt"
@@ -475,7 +475,7 @@ if __name__ == '__main__':
         config.relation_file = "data/tacred/relation_name.txt"
         config.rel_index = "data/tacred/rel_index.npy"
         config.rel_feature = "data/tacred/rel_feature.npy"
-        config.num_of_relation = 41
+        config.na_id = 41
         if config.shot == 5:
             config.rel_cluster_label = "data/tacred/CFRLdata_10_100_10_5/rel_cluster_label_0.npy"
             config.training_file = "data/tacred/CFRLdata_10_100_10_5/train_0.txt"
