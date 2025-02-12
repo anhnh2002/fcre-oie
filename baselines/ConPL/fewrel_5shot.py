@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+os.environ["CUDA_VISIBLE_DEVICES"] = "4"
 import numpy as np
 import torch
 import torch.nn as nn
@@ -10,10 +10,37 @@ import gc
 from tqdm import tqdm
 from sklearn.cluster import KMeans
 from encode import BERTSentenceEncoderPrompt
-from dataprocess import data_sampler_bert_prompt_deal_first_task
+from dataprocess import data_sampler_bert_prompt_deal_first_task_v2
 from model import proto_softmax_layer_bert_prompt
 from dataprocess import get_data_loader_bert_prompt
 from util import set_seed
+from sklearn.metrics import f1_score
+
+def f1(preds, labels, config):
+    unique_labels = set(preds + labels)
+    if config.na_id in unique_labels:
+        unique_labels.remove(config.na_id)
+    
+    unique_labels = list(unique_labels)
+
+    # Calculate F1 score for each class separately
+    f1_per_class = f1_score(preds, labels, average=None)
+
+    # Calculate micro-average F1 score
+    f1_micro = f1_score(preds, labels, average='micro', labels=unique_labels)
+
+    # Calculate macro-average F1 score
+    # f1_macro = f1_score(preds, labels, average='macro', labels=unique_labels)
+
+    # Calculate weighted-average F1 score
+    f1_weighted = f1_score(preds, labels, average='weighted', labels=unique_labels)
+
+    print("F1 score per class:", dict(zip(unique_labels, f1_per_class)))
+    print("Micro-average F1 score:", f1_micro)
+    # print("Macro-average F1 score:", f1_macro)
+    print("Weighted-average F1 score:", f1_weighted)
+
+    return f1_micro 
 
 def eval_model(config, basemodel, test_set, mem_relations):
     # print("One eval")
@@ -24,8 +51,13 @@ def eval_model(config, basemodel, test_set, mem_relations):
     allnum= 0.0
     correctnum = 0.0
 
-    for step, (labels, neg_labels, sentences, firstent, firstentindex, secondent, secondentindex, headid, tailid, rawtext, lengths,
+    preds = []
+    labels = []
+
+    for step, (labels, neg_labels, sentences,
                typelabels, masks, mask_pos) in enumerate(test_dataloader):
+
+        labels.extend(labels.cpu().tolist())
 
         sentences = sentences.to(config['device'])
         masks = masks.to(config['device'])
@@ -47,10 +79,11 @@ def eval_model(config, basemodel, test_set, mem_relations):
             if golden_score > max_neg_score:
                 correctnum += 1
 
-    acc = correctnum / allnum
+            preds.append(np.argmax(score))
+
     # print(acc)
     basemodel.train()
-    return acc
+    return f1(preds, labels, config)
 
 def get_memory(config, model, proto_set):
     memset = []
@@ -61,7 +94,7 @@ def get_memory(config, model, proto_set):
         rangeset.append(rangeset[-1] + len(i))
     data_loader = get_data_loader_bert_prompt(config, memset, False, False)
     features = []
-    for step, (labels, neg_labels, sentences, firstent, firstentindex, secondent, secondentindex, headid, tailid, rawtext, lengths,
+    for step, (labels, neg_labels, sentences,
                typelabels, masks, mask_pos) in enumerate(data_loader):
         sentences = sentences.to(config['device'])
         masks = masks.to(config['device'])
@@ -92,7 +125,7 @@ def select_data(mem_set, proto_memory, config, model, divide_train_set, num_sel_
         thisdataset = divide_train_set[thisrel]
         data_loader = get_data_loader_bert_prompt(config, thisdataset, False, False)
         features = []
-        for step, (labels, neg_labels, sentences, firstent, firstentindex, secondent, secondentindex, headid, tailid, rawtext, lengths,
+        for step, (labels, neg_labels, sentences,
                 typelabels, masks, mask_pos) in enumerate(data_loader):
             sentences = sentences.to(config['device'])
             masks = masks.to(config['device'])
@@ -224,12 +257,6 @@ def train_model_with_hard_neg(config, model, mem_set, traindata, epochs, current
     optimizer = optim.Adam(model.parameters(), config['learning_rate'])
     for epoch_i in range(epochs):
         model.set_memorized_prototypes_midproto(current_proto)
-        losses1 = []
-        losses2 = []
-        losses3 = []
-        losses4 = []
-        losses5 = []
-        losses6 = []
 
         lossesfactor1 = 0.0
         lossesfactor2 = 1.0
@@ -240,7 +267,7 @@ def train_model_with_hard_neg(config, model, mem_set, traindata, epochs, current
         else:
             lossesfactor5 = 0.0
         lossesfactor6 = 0.0
-        for step, (labels, neg_labels, sentences, firstent, firstentindex, secondent, secondentindex, headid, tailid, rawtext, lengths,
+        for step, (labels, neg_labels, sentences,
             typelabels, masks, mask_pos) in enumerate(data_loader):
             model.zero_grad()
             labels = labels.to(config['device'])
@@ -312,12 +339,7 @@ def train_model_with_hard_neg(config, model, mem_set, traindata, epochs, current
                 loss6 = loss6 / allusenum6
                 loss = loss1 * lossesfactor1 + loss2 * lossesfactor2 + loss3 * lossesfactor3 + loss4 * lossesfactor4 + loss5 * lossesfactor5 + loss6 * lossesfactor6   ###with loss5
             loss.backward()
-            losses1.append(loss1.item())
-            losses2.append(loss2.item())
-            losses3.append(loss3.item())
-            losses4.append(loss4.item())
-            losses5.append(loss5.item())
-            losses6.append(loss6.item())
+
             torch.nn.utils.clip_grad_norm_(model.parameters(), config['max_grad_norm'])#cxd
             optimizer.step()
         return model
@@ -339,12 +361,6 @@ def train_memory(config, model, mem_set, train_set, epochs, current_proto, origi
     optimizer = optim.Adam(model.parameters(), config['learning_rate'])#cxd
     for epoch_i in range(epochs):
         model.set_memorized_prototypes_midproto(current_proto)
-        losses1 = []
-        losses2 = []
-        losses3 = []
-        losses4 = []
-        losses5 = []
-        losses6 = []
 
         lossesfactor1 = 0.0
         lossesfactor2 = 1.0
@@ -353,8 +369,8 @@ def train_memory(config, model, mem_set, train_set, epochs, current_proto, origi
         lossesfactor5 = 1.0
         lossesfactor6 = 1.0
 
-        for step, (labels, neg_labels, sentences, firstent, firstentindex, secondent, secondentindex, headid, tailid, rawtext,
-                   lengths, typelabels, masks, mask_pos) in enumerate(tqdm(data_loader)):
+        for step, (labels, neg_labels, sentences,
+                   typelabels, masks, mask_pos) in enumerate(tqdm(data_loader)):
             model.zero_grad()
             sentences = sentences.to(config['device'])
             masks = masks.to(config['device'])
@@ -407,19 +423,14 @@ def train_memory(config, model, mem_set, train_set, epochs, current_proto, origi
 
             loss = loss1 * lossesfactor1 + loss2 * lossesfactor2 + loss3 * lossesfactor3 + loss4 * lossesfactor4  + loss5 * lossesfactor5 + loss6 * lossesfactor6
             loss.backward()
-            losses1.append(loss1.item())
-            losses2.append(loss2.item())
-            losses3.append(loss3.item())
-            losses4.append(loss4.item())
-            losses5.append(loss5.item())
-            losses6.append(loss6.item())
+
             torch.nn.utils.clip_grad_norm_(model.parameters(), config['max_grad_norm'])#cxd
             optimizer.step()
     return model
 
 
 if __name__ == '__main__':
-    f = open("config/config_fewrel_5and10.json", "r")
+    f = open("config/config_tacred.json", "r")
     config = json.loads(f.read())
     f.close()
     config['device'] = torch.device('cuda' if torch.cuda.is_available() and config['use_gpu'] else 'cpu')
@@ -433,12 +444,12 @@ if __name__ == '__main__':
 
     for m in range(donum):
         print(m)
-        config["rel_cluster_label"] = "data/fewrel/CFRLdata_10_100_10_5/rel_cluster_label_" + str(m) + ".npy"
-        config['training_file'] = "data/fewrel/CFRLdata_10_100_10_5/train_" + str(m) + ".txt"
-        config['valid_file'] = "data/fewrel/CFRLdata_10_100_10_5/valid_" + str(m) + ".txt"
-        config['test_file'] = "data/fewrel/CFRLdata_10_100_10_5/test_" + str(m) + ".txt"
+        config["rel_cluster_label"] = "data/tacred/CFRLdata_10_100_10_5/rel_cluster_label_" + str(m) + ".npy"
+        config['training_file'] = "data/tacred/CFRLdata_10_100_10_5/train_" + str(m) + ".txt"
+        config['valid_file'] = "data/tacred/CFRLdata_10_100_10_5/valid_" + str(m) + ".txt"
+        config['test_file'] = "data/tacred/CFRLdata_10_100_10_5/test_" + str(m) + ".txt"
 
-        config['first_task_k-way'] = 10
+        config['first_task_k-way'] = 6
         config['k-shot'] = 5
         encoderforbase = BERTSentenceEncoderPrompt(config)
 
@@ -454,15 +465,12 @@ if __name__ == '__main__':
             template = None
             print("no use soft prompt.")
         
-        sampler = data_sampler_bert_prompt_deal_first_task(config, encoderforbase.tokenizer, template)
+        sampler = data_sampler_bert_prompt_deal_first_task_v2(config, encoderforbase.tokenizer, template)
         modelforbase = proto_softmax_layer_bert_prompt(encoderforbase, num_class=len(sampler.id2rel), id2rel=sampler.id2rel, drop=0, config=config)
         modelforbase = modelforbase.to(config["device"])
 
-        sequence_results = []
         sequence_results_average = []
-        result_whole_test = []
-        result_whole_test_average = []
-        all_allresults_array = []
+        sequence_results_average_na = []
 
         fr_all = []
         distored_all = []
@@ -485,6 +493,8 @@ if __name__ == '__main__':
             savetest_all_data = None
             saveseen_relations = []
 
+            all_test_data = []
+
             proto_memory = []
 
             for i in range(len(sampler.id2rel)):
@@ -492,6 +502,7 @@ if __name__ == '__main__':
             # print('proto_memory', proto_memory)
             oneseqres = []
             whole_acc = []
+            whole_acc_na = []
             allresults_list = []
             ##################################
             whichdataselecct = 1
@@ -559,37 +570,23 @@ if __name__ == '__main__':
                 modelforbase.save_bestproto(current_relations)#save bestproto
                 mem_relations.extend(current_relations)
 
-                currentalltest = []
-                for mm in range(len(test_data)):
-                    currentalltest.extend(test_data[mm])
-
-                #compute mean accuarcy
-                results = [eval_model(config, modelforbase, item, mem_relations) for item in test_data]
-                allresults_list.append(results)
+                # wo na
+                all_test_data.extend([x for x in test_data if x[0] != config.na_id])
+                results = [eval_model(config, modelforbase, item, mem_relations) for item in all_test_data]
                 results_average = np.array(results).mean()
                 print("step:\t",steps,"\taccuracy_average:\t",results_average)
                 whole_acc.append(results_average)
 
-                #compute whole accuarcy
-                thisstepres = eval_model(config, modelforbase, currentalltest, mem_relations)
-                print("step:\t",steps,"\taccuracy_whole:\t",thisstepres)
-                oneseqres.append(thisstepres)
+                # w na
+                all_test_data.extend(test_data)
+                results = [eval_model(config, modelforbase, item, mem_relations) for item in all_test_data]
+                results_average = np.array(results).mean()
+                print("step:\t",steps,"\taccuracy_average:\t",results_average)
+                whole_acc_na.append(results_average)
 
-            sequence_results.append(np.array(oneseqres))
+
             sequence_results_average.append(np.array(whole_acc))
-
-            allres = eval_model(config, modelforbase, savetest_all_data, saveseen_relations)
-            result_whole_test.append(allres)
-
-            print("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
-            print("after one epoch allres whole:\t",allres)
-            print(result_whole_test)
-
-            allresults = [eval_model(config, modelforbase, item, num_class) for item in savetest_all_data_splited]
-            allresults_average = np.array(allresults).mean()
-            result_whole_test_average.append(allresults_average)
-            print("after one epoch allres average:\t",allresults)
-            print(result_whole_test_average)
+            sequence_results_average_na.append(np.array(whole_acc_na))
 
 
             modelforbase = modelforbase.to('cpu')
@@ -600,23 +597,34 @@ if __name__ == '__main__':
             encoderforbase = BERTSentenceEncoderPrompt(config)
             modelforbase = proto_softmax_layer_bert_prompt(encoderforbase, num_class=len(sampler.id2rel), id2rel=sampler.id2rel, drop=0, config=config)
             modelforbase = modelforbase.to(config["device"])
-        print("Final result: whole!")
-        print(result_whole_test)
-        for one in sequence_results:
-            for item in one:
-                sys.stdout.write('%.4f, ' % item)
-            print('')
-        avg_result_all_test = np.average(sequence_results, 0)
-        for one in avg_result_all_test:
-            sys.stdout.write('%.4f, ' % one)
-        print('')
+
+        # wo na
+        # average
         print("Final result: average!")
-        print(result_whole_test_average)
-        for one in sequence_results_average:
-            for item in one:
-                sys.stdout.write('%.4f, ' % item)
-            print('')
         avg_result_all_test_average = np.average(sequence_results_average, 0)
         for one in avg_result_all_test_average:
+            sys.stdout.write('%.4f, ' % one)
+        print('')
+
+        # std
+        print("Final result: std!")
+        std_result_all_test_average = np.std(sequence_results_average, 0)
+        for one in std_result_all_test_average:
+            sys.stdout.write('%.4f, ' % one)
+        print('')
+
+
+        # w na
+        # average
+        print("Final result na: average!")
+        avg_result_all_test_average_na = np.average(sequence_results_average_na, 0)
+        for one in avg_result_all_test_average_na:
+            sys.stdout.write('%.4f, ' % one)
+        print('')
+
+        # std
+        print("Final result na: std!")
+        std_result_all_test_average_na = np.std(sequence_results_average_na, 0)
+        for one in std_result_all_test_average_na:
             sys.stdout.write('%.4f, ' % one)
         print('')

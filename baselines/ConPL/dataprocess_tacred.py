@@ -4,6 +4,8 @@ import wordninja
 import random
 import re
 from torch.utils.data import Dataset, DataLoader
+import os
+import pickle
 
 class sequence_data_sampler(object):
 
@@ -181,16 +183,20 @@ class sequence_data_sampler_bert_prompt(object):
             raise StopIteration()
         index = self.shuffle_index[self.batch]
         self.batch += 1
-        training_data = self.data_sampler.splited_training_data[index]
-        valid_data = self.data_sampler.splited_valid_data[index]
-        test_data = self.data_sampler.splited_test_data[index]
+        training_data = self.data_sampler.training_data[index]
+        valid_data = self.data_sampler.valid_data[index]
+        test_data = self.data_sampler.test_data[index]
+
+        training_data_na = self.data_sampler.training_data_na[index]
+        valid_data_na = self.data_sampler.valid_data_na[index]
+        test_data_na = self.data_sampler.test_data_na[index]
 
         current_relations = []
         for data in training_data:
-            if data[0] not in self.seen_relations:
-                self.seen_relations.append(data[0])
-            if data[0] not in current_relations:
-                current_relations.append(data[0])
+            if data['relation'] not in self.seen_relations:
+                self.seen_relations.append(data['relation'])
+            if data['relation'] not in current_relations:
+                current_relations.append(data['relation'])
 
         #print(len(training_data))
         cur_training_data = self.remove_unseen_relation(training_data, self.seen_relations)
@@ -1494,6 +1500,219 @@ class data_sampler_bert_prompt(object):
                 word_list += wordninja.split(word)
         return " ".join(word_list)
 
+class data_sampler_bert_prompt_deal_first_task_v2(object):
+
+    def __init__(self, config=None, tokenizer=None, template=None, max_length=128):
+        self.config = config
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.template = template
+        self.prompt_len = 2
+        self.unused_token = "[unused0]"
+        self.mask_token = '[MASK]'
+
+        self.config.vocab_size = len(self.tokenizer)
+        self.config.sep_token_ids = self.tokenizer.get_vocab()[self.tokenizer.sep_token]
+        self.config.mask_token_ids = self.tokenizer.get_vocab()[self.tokenizer.mask_token]
+        self.sep_token_ids, self.mask_token_ids =  self.config.sep_token_ids, self.config.mask_token_ids
+
+        self.training_data = self._read_data(config['training_file'])
+        self.valid_data = self._read_data(config['valid_file'])
+        self.test_data = self._read_data(config['test_file'])
+
+        self.training_data_na = self._read_na_data(config['training_file'])
+        self.valid_data_na = self._read_na_data(config['valid_file'])
+        self.test_data_na = self._read_na_data(config['test_file'])
+
+        ##load relation
+        self.relation_names, self.id2rel = self._read_relations(config['relation_file'])
+        self.id2rel_pattern = {}
+        for i in self.id2rel:
+            tokens, fakefirstent, fakefirstindex, fakesecondent, fakesecondindex, fakeheadid, faketailid, rawtext, length, fakelabel, mask = self._transfrom_sentence(self.id2rel[i])
+            self.id2rel_pattern[i] = (i, [i], tokens, fakefirstent, fakefirstindex, fakesecondent, fakesecondindex, fakeheadid, faketailid, rawtext, length, fakelabel, mask, 0, fakefirstindex, fakesecondindex) ####need new format
+        self.num_clusters = config['num_clusters']
+        self.cluster_labels = {}
+        self.rel_features = {}
+        rel_index = np.load("data/tacred/rel_index.npy")
+        rel_cluster_label = np.load(config["rel_cluster_label"])
+        rel_feature = np.load("data/tacred/rel_feature.npy")
+        for index, i in enumerate(rel_index):
+            self.cluster_labels[i] = rel_cluster_label[index]
+            self.rel_features[i] = rel_feature[index]
+        self.splited_training_data = self._split_data(self.training_data, self.cluster_labels, self.num_clusters)
+        #deal first task
+        self.splited_training_data = self._deal_first_task(self.splited_training_data)
+
+
+        self.splited_valid_data = self._split_data(self.valid_data, self.cluster_labels, self.num_clusters)
+        self.splited_test_data = self._split_data(self.test_data, self.cluster_labels, self.num_clusters)
+        self.seed = None
+    
+    def _deal_first_task(self, splited_training_data):
+        splited_training_data_list = []
+        for training_data in splited_training_data:
+            if len(training_data) > self.config['first_task_k-way']*self.config['k-shot']:
+                task_data = []
+                class_dic = {}
+                for data in training_data:
+                    if data[0] in class_dic.keys():
+                        if class_dic[data[0]] < self.config['k-shot']:
+                            class_dic[data[0]] += 1
+                            task_data.append(data)
+                    else:
+                        class_dic[data[0]] = 1
+                        task_data.append(data)
+                splited_training_data_list.append(task_data)
+            else:
+                splited_training_data_list.append(training_data)
+        return splited_training_data_list
+
+    def _split_data(self, data_set, cluster_labels, num_clusters):
+        splited_data = [[] for i in range(num_clusters)]
+        for data in data_set:
+            splited_data[cluster_labels[data[0]]].append(data)
+        return splited_data
+
+    
+
+    def _read_data(self, file):
+
+        save_data_path = file.replace('.txt', '.pkl')
+
+        if os.path.isfile(save_data_path):
+            with open(save_data_path, 'rb') as f:
+                datas = pickle.load(f)
+                print(save_data_path)
+            return datas
+        else:
+            samples = []
+            with open(file) as f:
+                for i, line in enumerate(f):
+                    sample = {}
+                    items = line.strip().split('\t')
+                    if (len(items[0]) > 0):
+                        sample['relation'] = int(items[0]) - 1
+                        sample['index'] = i
+                        if items[1] != 'noNegativeAnswer':
+                            candidate_ixs = [int(ix) for ix in items[1].split()]
+                            sample['tokens'] = items[2].split()
+                            headent = items[3]
+                            headidx = [[int(ix) for ix in items[4].split()]]
+                            tailent = items[5]
+                            tailidx = [[int(ix) for ix in items[6].split()]]
+                            headid = items[7]
+                            tailid = items[8]
+                            sample['h'] = [headent, headid, headidx]
+                            sample['t'] = [tailent, tailid, tailidx]
+                            samples.append(sample)
+
+            read_data = [[] for i in range(self.config.num_of_relation)]
+            for sample in samples:
+                ids, mask, mask_pos = self._tokenize(sample)
+                read_data[sample['relation']].append({'ids': ids, 'mask': mask, 'mask_pos': mask_pos, 'relation': sample['relation'], 'index': sample['index']})
+            with open(save_data_path, 'wb') as f:
+                pickle.dump(read_data, f)
+                print(save_data_path)
+            return read_data
+    
+    def _read_na_data(self, file: str):
+        file = file.replace('train_0.txt', 'na_train.json').replace('valid_0.txt', 'na_valid.json').replace('test_0.txt', 'na_test.json')
+        save_data_path = file.replace('.json', '.pkl')
+        import json
+        if os.path.isfile(save_data_path):
+            with open(save_data_path, 'rb') as f:
+                datas = pickle.load(f)
+                print(save_data_path)
+            return datas
+        else:
+            with open(file) as f:
+                na_data = json.load(f)
+
+            processed_na_data = [[] for i in range(self.config.num_of_relation)]
+
+            for key in na_data.keys():
+                # processed_na_data[int(key)] = []
+                sample = {}
+                for i, line in enumerate(na_data[key]):
+                    items = line.strip().split('\t')
+                    if (len(items[0]) > 0):
+                        sample['relation'] = int(items[0]) - 1
+                        sample['index'] = i
+                        if items[1] != 'noNegativeAnswer':
+                            candidate_ixs = [int(ix) for ix in items[1].split()]
+                            sample['tokens'] = items[2].split()
+                            headent = items[3]
+                            headidx = [[int(ix) for ix in items[4].split()]]
+                            tailent = items[5]
+                            tailidx = [[int(ix) for ix in items[6].split()]]
+                            headid = items[7]
+                            tailid = items[8]
+                            sample['h'] = [headent, headid, headidx]
+                            sample['t'] = [tailent, tailid, tailidx]
+
+                            ids, mask, mask_pos = self._tokenize(sample)
+
+                            processed_na_data[int(key)].append({'ids': ids, 'mask': mask, 'mask_pos': mask_pos, 'relation': sample['relation'], 'index': sample['index']})
+
+            with open(save_data_path, 'wb') as f:
+                pickle.dump(processed_na_data, f)
+                print(save_data_path)
+            return processed_na_data
+
+
+    def _tokenize(self, sample):
+        '''
+        X [v] e1 [v] [MASK] [v] e2 [v] 
+        [v] = [unused0] * prompt_len
+        '''
+        prompt_len = self.prompt_len
+        raw_tokens = sample['tokens']
+        h, t = sample['h'][0].split(' '),  sample['t'][0].split(' ')
+        prompt = raw_tokens + [self.unused_token] * prompt_len + h + [self.unused_token] * prompt_len \
+               + [self.mask_token] + [self.unused_token] * prompt_len + t + [self.unused_token] * prompt_len  
+        ids = self.tokenizer.encode(' '.join(prompt),
+                                    padding='max_length',
+                                    truncation=True,
+                                    max_length=self.max_length)        
+        # mask
+        mask = np.zeros(self.max_length, dtype=np.int32)
+        end_index = np.argwhere(np.array(ids) == self.sep_token_ids)[0][0]
+        mask[:end_index + 1] = 1
+
+        # get mask position
+        try:
+            mask_pos = np.argwhere(np.array(ids) == self.mask_token_ids)[0][0]
+        except:
+            mask_pos = 0
+
+        return ids, mask, mask_pos
+
+    def __iter__(self):
+        return sequence_data_sampler_bert_prompt(self, self.seed)
+
+    def set_seed(self, seed):
+        self.seed = seed
+
+    # reading training, valid, test files
+    def _remove_return_sym(self, str):
+        return str.split('\n')[0]
+
+    def _read_relations(self, file):
+        relation_list = [self._split_relation_into_words(self._remove_return_sym('fill fill fill'))]
+        id2rel = {0: 'fill fill fill'}
+        with open(file) as file_in:
+            for line in file_in:
+                relation_list.append(self._split_relation_into_words(self._remove_return_sym(line)))
+                id2rel[len(id2rel)] = self._remove_return_sym(line)
+        return relation_list, id2rel
+
+    def _split_relation_into_words(self, relation):
+        word_list = []
+        for word_seq in relation.split("/")[-3:]:
+            for word in word_seq.split("_"):
+                word_list += wordninja.split(word)
+        return " ".join(word_list)
+
 class data_sampler_bert_prompt_deal_first_task(object):
 
     def __init__(self, config=None, tokenizer=None, template=None, max_length=128):
@@ -1685,7 +1904,7 @@ class data_sampler_bert_prompt_deal_first_task(object):
         g_text = " ".join(f_text)
         l_text = g_text.split()
         tokenized_input = tokenizer.convert_tokens_to_ids(l_text)
-        #print(f_text,"        *********************       ",tokenized_input)
+        print(g_text)
         #print("-----------------------------------------------------")
         return tokenized_input, h_begin_new, h_end_new, t_begin_new, t_end_new, mask_pos
 
