@@ -555,8 +555,8 @@ if __name__ == '__main__':
     config.task = args.task
     config.shot = args.shot
     config.step1_epochs = 5
-    config.step2_epochs = 5
-    config.step3_epochs = 5
+    config.step2_epochs = 15
+    config.step3_epochs = 20
     config.temperature = 0.08
 
     if config.task == "FewRel":
