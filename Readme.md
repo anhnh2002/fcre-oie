@@ -97,6 +97,14 @@ CUDA_VISIBLE_DEVICES=0 python train.py --task_name Tacred --num_k 5 --num_gen 5 
 CUDA_VISIBLE_DEVICES=0 python train.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 2.0 --w2 2.0 --w3 0.5 --w4 0.0 >> tacred-5shot-1nga-bz32-wo_hsmt.log
 ```
 
+# Unknown NA only
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python train.py --task_name Tacred --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 2.0 --w2 2.0 --w3 0.0 --only_unknown >> tacred-5shot-5nga-bz32-202000-only_unknown.log
+
+CUDA_VISIBLE_DEVICES=1 python train.py --task_name FewRel --num_k 5 --num_gen 5 --batch_size 32 --num_gen_augment 5 --w1 2.0 --w2 2.0 --w3 0.0 --only_unknown >> fewrel-5shot-5nga-bz32-202000-only_unknown.log
+```
+
 # Baselines
 
 ## CPL-MI
@@ -156,4 +164,21 @@ CUDA_VISIBLE_DEVICES=1 python main.py \
     --task FewRel \
     --shot 5 \
     >> fewrel-5shot-bz256.log
+```
+
+## ConPL
+
+1. Navigate to the SCKD directory:
+```bash
+cd baselines/ConPL
+```
+
+#### TACRED Dataset
+```bash
+CUDA_VISIBLE_DEVICES=0 python tacred_5shot.py >> tacred_5shot.log
+```
+
+#### FewRel Dataset
+```bash
+CUDA_VISIBLE_DEVICES=1 python fewrel_5shot.py >> fewrel_5shot.log
 ```

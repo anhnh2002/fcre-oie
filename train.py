@@ -14,7 +14,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-from sampler import data_sampler_CFRL
+from sampler import data_sampler_CFRL, unknown_na_data_sampler_CFRL
 from data_loader import get_data_loader_BERT
 from utils import Moment
 from encoder import EncodingModel
@@ -585,12 +585,231 @@ class Manager(object):
         # torch.save(encoder.state_dict(), "./checkpoints/encoder.pth")
         return (total_acc_num_wo_na, total_acc_num1_wo_na), (total_acc_num_w_na, total_acc_num1_w_na), (total_acc_num_w_filtered_na, total_acc_num1_w_filtered_na)
 
+    def train_unknown_only(self):
+        # sampler 
+        sampler = unknown_na_data_sampler_CFRL(config=self.config, seed=self.config.seed)
+
+        self.config.vocab_size = sampler.config.vocab_size
+
+        print('prepared data!')
+        self.id2rel = sampler.id2rel
+        self.rel2id = sampler.rel2id
+
+        # encoder
+        encoder = EncodingModel(self.config)
+
+        # step is continual task number wo na
+        cur_acc_wo_na, total_acc_wo_na = [], []
+        cur_acc1_wo_na, total_acc1_wo_na = [], []
+
+        cur_acc_num_wo_na, total_acc_num_wo_na = [], []
+        cur_acc_num1_wo_na, total_acc_num1_wo_na = [], []
+
+        # step is continual task number w na
+        cur_acc_w_na, total_acc_w_na = [], []
+        cur_acc1_w_na, total_acc1_w_na = [], []
+
+        cur_acc_num_w_na, total_acc_num_w_na = [], []
+        cur_acc_num1_w_na, total_acc_num1_w_na = [], []
+
+        # step is continual task number with filtered na
+        cur_acc_w_filtered_na, total_acc_w_filtered_na = [], []
+        cur_acc1_w_filtered_na, total_acc1_w_filtered_na = [], []
+
+        cur_acc_num_w_filtered_na, total_acc_num_w_filtered_na = [], []
+        cur_acc_num1_w_filtered_na, total_acc_num1_w_filtered_na = [], []
+
+
+        memory_samples = {}
+        data_generation = []
+        seen_des = {}
+
+
+        self.unused_tokens = ['[unused0]', '[unused1]', '[unused2]', '[unused3]']
+        self.unused_token = '[unused0]'
+        self.tokenizer = BertTokenizer.from_pretrained(self.config.bert_path, \
+            additional_special_tokens=[self.unused_token])
+        
+        for step, (training_data, valid_data, test_data, current_relations, \
+            historic_test_data, seen_relations, seen_descriptions) in enumerate(sampler):
+
+            for rel in current_relations:
+                
+                if rel in seen_des and rel == self.id2rel[self.config.na_id]:
+                    continue
+
+                for augment_des in seen_descriptions[rel]:
+                    ids = self.tokenizer.encode(augment_des,
+                                        padding='max_length',
+                                        truncation=True,
+                                        max_length=self.config.max_length)        
+                    # mask
+                    mask = np.zeros(self.config.max_length, dtype=np.int32)
+                    end_index = np.argwhere(np.array(ids) == self.tokenizer.get_vocab()[self.tokenizer.sep_token])[0][0]
+                    mask[:end_index + 1] = 1 
+                    if rel not in seen_des:
+                        seen_des[rel] = {}
+                        seen_des[rel]['ids'] = [ids]
+                        seen_des[rel]['mask'] = [mask]
+                    else:
+                        seen_des[rel]['ids'].append(ids)
+                        seen_des[rel]['mask'].append(mask)
+
+            print(f"seen_des: {seen_des.keys()}")
+
+            # Initialization
+            self.moment = Moment(self.config)
+
+            # Train current task
+            training_data_initialize = []
+            for rel in current_relations:
+                training_data_initialize += training_data[rel]
+            self.moment.init_moment(encoder, training_data_initialize, is_memory=False)
+            self.train_model(encoder, training_data_initialize, seen_des)
+
+            # Select memory samples
+            for rel in current_relations:
+                memory_samples[rel], _ = self.select_memory(encoder, training_data[rel])
+                    
+            # Train memory
+            if step > 0:
+                memory_data_initialize = []
+                for rel in seen_relations:
+                    memory_data_initialize += memory_samples[rel]
+                memory_data_initialize += data_generation
+                self.moment.init_moment(encoder, memory_data_initialize, is_memory=True) 
+                self.train_model(encoder, memory_data_initialize, seen_des, is_memory=True)
+
+            # Update proto
+            seen_proto = []  
+            for rel in seen_relations:
+                proto, _ = self.get_memory_proto(encoder, memory_samples[rel])
+                seen_proto.append(proto)
+            seen_proto = torch.stack(seen_proto, dim=0)
+
+            # get seen relation id
+            seen_relid = []
+            for rel in seen_relations:
+                seen_relid.append(self.rel2id[rel])
+
+            seen_des_by_id = {}
+            for rel in seen_relations:
+                seen_des_by_id[self.rel2id[rel]] = seen_des[rel]
+            list_seen_des = []
+            for i in range(len(seen_proto)):
+                list_seen_des.append(seen_des_by_id[seen_relid[i]])
+
+            with torch.no_grad():
+                rep_des = []
+                for i in range(len(list_seen_des)):
+                    mean_hidden = []
+                    for j in range(len(list_seen_des[i]['ids'])):
+                        sample = {
+                            'ids' : torch.tensor([list_seen_des[i]['ids'][j]]).to(self.config.device),
+                            'mask' : torch.tensor([list_seen_des[i]['mask'][j]]).to(self.config.device)
+                        }
+                        hidden = encoder(sample, is_des=True)
+                        hidden = hidden.detach().cpu().data
+                        mean_hidden.append(hidden)
+                        # calculate mean_hidden list of 3 elements to 1 elements
+                    mean_hidden = torch.stack(mean_hidden, dim=0)  # Shape: (num_samples, hidden_dim)
+                    mean_hidden = torch.mean(mean_hidden, dim=0) 
+                    rep_des.append(mean_hidden)
+                rep_des = torch.cat(rep_des, dim=0)
+            
+
+            # Eval current task and history task wo na
+            test_data_initialize_cur_wo_na, test_data_initialize_seen_wo_na = [], []
+            for rel in current_relations:
+                if rel != self.id2rel[self.config.na_id]:
+                    test_data_initialize_cur_wo_na += test_data[rel]
+                
+            for rel in seen_relations:
+                if rel != self.id2rel[self.config.na_id]:
+                    test_data_initialize_seen_wo_na += historic_test_data[rel]
+            
+            ac1_wo_na, ac1_des_wo_na = self.eval_encoder_proto_des(encoder,seen_proto,seen_relid,test_data_initialize_cur_wo_na,rep_des)
+            ac2_wo_na, ac2_des_wo_na = self.eval_encoder_proto_des(encoder,seen_proto,seen_relid,test_data_initialize_seen_wo_na,rep_des)
+
+            # Eval current task and history task w na
+            test_data_initialize_cur_w_na, test_data_initialize_seen_w_na = [], []
+            for rel in current_relations:
+                test_data_initialize_cur_w_na += test_data[rel]
+                
+            for rel in seen_relations:
+                test_data_initialize_seen_w_na += historic_test_data[rel]
+            
+            ac1_w_na, ac1_des_w_na = self.eval_encoder_proto_des(encoder,seen_proto,seen_relid,test_data_initialize_cur_w_na,rep_des)
+            ac2_w_na, ac2_des_w_na = self.eval_encoder_proto_des(encoder,seen_proto,seen_relid,test_data_initialize_seen_w_na,rep_des)
+
+            # Eval current task and history task with filtered na
+            test_data_initialize_cur_w_na, test_data_initialize_seen_w_na = [], []
+            for rel in current_relations:
+                test_data_initialize_cur_w_na += test_data[rel]
+                
+            for rel in seen_relations:
+                test_data_initialize_seen_w_na += historic_test_data[rel]
+            
+            ac1_w_filtered_na, ac1_des_w_filtered_na = 0, 0
+            ac2_w_filtered_na, ac2_des_w_filtered_na = 0, 0
+            
+            # wo na
+            cur_acc_num_wo_na.append(ac1_wo_na)
+            total_acc_num_wo_na.append(ac2_wo_na)
+            cur_acc_wo_na.append('{:.4f}'.format(ac1_wo_na))
+            total_acc_wo_na.append('{:.4f}'.format(ac2_wo_na))
+            print('cur_acc_wo_na: ', cur_acc_wo_na)
+            print('his_acc_wo_na: ', total_acc_wo_na)
+
+            cur_acc_num1_wo_na.append(ac1_des_wo_na)
+            total_acc_num1_wo_na.append(ac2_des_wo_na)
+            cur_acc1_wo_na.append('{:.4f}'.format(ac1_des_wo_na))
+            total_acc1_wo_na.append('{:.4f}'.format(ac2_des_wo_na))
+            print('cur_acc des_wo_na: ', cur_acc1_wo_na)
+            print('his_acc des_wo_na: ', total_acc1_wo_na)
+
+            # w na
+            cur_acc_num_w_na.append(ac1_w_na)
+            total_acc_num_w_na.append(ac2_w_na)
+            cur_acc_w_na.append('{:.4f}'.format(ac1_w_na))
+            total_acc_w_na.append('{:.4f}'.format(ac2_w_na))
+            print('cur_acc_w_na: ', cur_acc_w_na)
+            print('his_acc_w_na: ', total_acc_w_na)
+
+            cur_acc_num1_w_na.append(ac1_des_w_na)
+            total_acc_num1_w_na.append(ac2_des_w_na)
+            cur_acc1_w_na.append('{:.4f}'.format(ac1_des_w_na))
+            total_acc1_w_na.append('{:.4f}'.format(ac2_des_w_na))
+            print('cur_acc des_w_na: ', cur_acc1_w_na)
+            print('his_acc des_w_na: ', total_acc1_w_na)
+
+            # w filtered na
+            cur_acc_num_w_filtered_na.append(ac1_w_filtered_na)
+            total_acc_num_w_filtered_na.append(ac2_w_filtered_na)
+            cur_acc_w_filtered_na.append('{:.4f}'.format(ac1_w_filtered_na))
+            total_acc_w_filtered_na.append('{:.4f}'.format(ac2_w_filtered_na))
+            print('cur_acc_w_filtered_na: ', cur_acc_w_filtered_na)
+            print('his_acc_w_filtered_na: ', total_acc_w_filtered_na)
+
+            cur_acc_num1_w_filtered_na.append(ac1_des_w_filtered_na)
+            total_acc_num1_w_filtered_na.append(ac2_des_w_filtered_na)
+            cur_acc1_w_filtered_na.append('{:.4f}'.format(ac1_des_w_filtered_na))
+            total_acc1_w_filtered_na.append('{:.4f}'.format(ac2_des_w_filtered_na))
+            print('cur_acc des_w_filtered_na: ', cur_acc1_w_filtered_na)
+            print('his_acc des_w_filtered_na: ', total_acc1_w_filtered_na)
+
+
+        torch.cuda.empty_cache()
+        # save model
+        # torch.save(encoder.state_dict(), "./checkpoints/encoder.pth")
+        return (total_acc_num_wo_na, total_acc_num1_wo_na), (total_acc_num_w_na, total_acc_num1_w_na), (total_acc_num_w_filtered_na, total_acc_num1_w_filtered_na)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--task_name", default="FewRel", type=str)
     parser.add_argument("--num_k", default=5, type=int)
     parser.add_argument("--num_gen", default=2, type=int)
+    parser.add_argument("--only_unknown", action='store_true')
 
     # num_gen_augment
     parser.add_argument("--num_gen_augment", default=1, type=int)
@@ -615,6 +834,7 @@ if __name__ == '__main__':
     config.task_name = args.task_name
     config.num_k = args.num_k
     config.num_gen = args.num_gen
+    config.only_unknown = args.only_unknown
     config.num_gen_augment = args.num_gen_augment
     config.batch_size = args.batch_size
     config.w1 = args.w1
@@ -690,7 +910,11 @@ if __name__ == '__main__':
         print('--------Round ', i)
         print('seed: ', config.seed)
         manager = Manager(config)
-        (acc_wo_na, acc1_wo_na), (acc_w_na, acc1_w_na), (acc_w_filtered_na, acc1_w_filtered_na) = manager.train()
+
+        if config.only_unknown:
+            (acc_wo_na, acc1_wo_na), (acc_w_na, acc1_w_na), (acc_w_filtered_na, acc1_w_filtered_na) = manager.train_unknown_only()
+        else:
+            (acc_wo_na, acc1_wo_na), (acc_w_na, acc1_w_na), (acc_w_filtered_na, acc1_w_filtered_na) = manager.train()
         
         # wo na
         acc_list_wo_na.append(acc_wo_na)
