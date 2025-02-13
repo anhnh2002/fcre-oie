@@ -17,6 +17,7 @@ from copy import deepcopy
 import os
 from sklearn.metrics import f1_score
 from tqdm import tqdm
+import time
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 
@@ -35,7 +36,14 @@ def train_simple_model(config, encoder, dropout_layer, classifier, training_data
     ])
     for epoch_i in range(epochs):
         losses = []
-        for step, batch_data in enumerate(data_loader):
+
+        step = 0
+        for batch_data in tqdm(data_loader):
+
+            # step += 1
+            # if step == 5:
+            #     break
+
             optimizer.zero_grad()
             labels, _, tokens = batch_data
             labels = labels.to(config.device)
@@ -84,8 +92,15 @@ def construct_hard_triplets(output, labels, relation_data):
         for key in relation_data.keys():
             if key != label.item():
                 negative_relation_data.extend(relation_data[key])
-        positive_distance = torch.stack([pdist(rep.cpu(), p) for p in positive_relation_data])
-        negative_distance = torch.stack([pdist(rep.cpu(), n) for n in negative_relation_data])
+
+        positive_relation_data = torch.stack(positive_relation_data).to(rep.device)
+        negative_relation_data = torch.stack(negative_relation_data).to(rep.device)
+        
+        # positive_distance = torch.stack([pdist(rep.cpu(), p) for p in positive_relation_data])
+        positive_distance = pdist(rep, positive_relation_data)
+        # negative_distance = torch.stack([pdist(rep.cpu(), n) for n in negative_relation_data])
+        negative_distance = pdist(rep, negative_relation_data)
+
         positive_index = torch.argmax(positive_distance)
         negative_index = torch.argmin(negative_distance)
         positive.append(positive_relation_data[positive_index.item()])
@@ -124,30 +139,42 @@ def train_first(config, encoder, dropout_layer, classifier, training_data, epoch
             tokens = torch.stack([x.to(config.device) for x in tokens], dim=0)
             labels = labels.to(config.device)
             origin_labels = labels[:]
-            labels = [map_relid2tempid[x.item()] for x in labels]
-            labels = torch.tensor(labels).to(config.device)
+            labels = torch.tensor([map_relid2tempid[x.item()] for x in labels]).to(config.device)
+
+            # Get representations
             reps = encoder(tokens)
-            outputs,_ = dropout_layer(reps)
-            positives,negatives = construct_hard_triplets(outputs, origin_labels, new_relation_data)
+            outputs, _ = dropout_layer(reps)
+            positives, negatives = construct_hard_triplets(outputs, origin_labels, new_relation_data)
 
-            for _ in range(config.f_pass):
-                output, output_embedding = dropout_layer(reps)
-                logits = classifier(output)
-                logits_all.append(logits)
+            # Replace for loop with single batch computation
+            # Create f_pass copies of reps using expand
+            batch_reps = reps.unsqueeze(0).expand(config.f_pass, -1, -1)  # Shape: [f_pass, batch_size, hidden_dim]
 
+            # Apply dropout to all copies at once
+            batch_outputs, batch_embeddings = dropout_layer(batch_reps)  # Shape: [f_pass, batch_size, hidden_dim]
+
+            # Get logits for all passes in one computation
+            logits_all = classifier(batch_outputs)  # Shape: [f_pass, batch_size, num_classes]
+
+            # Process triplets
             positives = torch.cat(positives, 0).to(config.device)
             negatives = torch.cat(negatives, 0).to(config.device)
             anchors = outputs
-            logits_all = torch.stack(logits_all)
-            m_labels = labels.expand((config.f_pass, labels.shape[0]))  # m,B
 
-            label_weights = torch.ones(len(m_labels.reshape(-1))).to(config.device)
-            unique_labels, label_counts = torch.unique(m_labels.reshape(-1), return_counts=True)
-            label_weights = 1.0 / label_counts[torch.searchsorted(unique_labels, m_labels.reshape(-1))]
-            label_weights = label_weights / label_weights.sum() * len(m_labels.reshape(-1))
-            label_weights = label_weights.to(config.device) # (b)
+            # Create labels matrix
+            m_labels = labels.expand(config.f_pass, labels.shape[0])  # Shape: [f_pass, batch_size]
 
-            loss1: torch.Tensor = criterion(logits_all.reshape(-1, logits_all.shape[-1]), m_labels.reshape(-1)) * label_weights
+            # Compute label weights
+            flat_labels = m_labels.reshape(-1)
+            # unique_labels, label_counts = torch.unique(flat_labels, return_counts=True)
+            # label_weights = torch.zeros_like(flat_labels, dtype=torch.float)
+            # label_weights.index_add_(0, flat_labels, torch.ones_like(flat_labels, dtype=torch.float))
+            # label_weights = 1.0 / label_weights
+            # label_weights = label_weights / label_weights.sum() * len(flat_labels)
+            # label_weights = label_weights.to(config.device)
+
+            # Compute losses
+            loss1 = criterion(logits_all.reshape(-1, logits_all.shape[-1]), flat_labels)# * label_weights
             loss2 = compute_jsd_loss(logits_all)
             tri_loss = triplet_loss(anchors, positives, negatives)
             loss = loss1.mean() + loss2 + tri_loss
@@ -183,6 +210,7 @@ def train_mem_model(config, encoder, dropout_layer, classifier, training_data, e
             # step += 1
             # if step == 5:
             #     break
+            start_time = time.time()
 
             optimizer.zero_grad()
 
@@ -201,27 +229,39 @@ def train_mem_model(config, encoder, dropout_layer, classifier, training_data, e
             else:
                 positives, negatives = construct_hard_triplets(outputs, origin_labels, new_relation_data)
 
-            for _ in range(config.f_pass):
-                output, output_embedding = dropout_layer(reps)
-                logits = classifier(output)
-                logits_all.append(logits)
+            # print(f"construct triplets time: {time.time()-start_time}")
+            start_time = time.time()
+
+            # for _ in range(config.f_pass):
+            #     output, output_embedding = dropout_layer(reps)
+            #     logits = classifier(output)
+            #     logits_all.append(logits)
+            batch_reps = reps.unsqueeze(0).expand(config.f_pass, -1, -1)  # Shape: [f_pass, batch_size, hidden_dim]
+
+            # Apply dropout to all copies at once
+            batch_outputs, batch_embeddings = dropout_layer(batch_reps)  # Shape: [f_pass, batch_size, hidden_dim]
+
+            # Get logits for all passes in one computation
+            logits_all = classifier(batch_outputs)  # Shape: [f_pass, batch_size, num_classes]
 
             positives = torch.cat(positives, 0).to(config.device)
             negatives = torch.cat(negatives, 0).to(config.device)
             anchors = outputs
-            logits_all = torch.stack(logits_all)
             m_labels = labels.expand((config.f_pass, labels.shape[0]))  # m,B
 
-            label_weights = torch.ones(len(m_labels.reshape(-1))).to(config.device)
-            unique_labels, label_counts = torch.unique(m_labels.reshape(-1), return_counts=True)
-            label_weights = 1.0 / label_counts[torch.searchsorted(unique_labels, m_labels.reshape(-1))]
-            label_weights = label_weights / label_weights.sum() * len(m_labels.reshape(-1))
-            label_weights = label_weights.to(config.device) # (b)
+            # label_weights = torch.ones(len(m_labels.reshape(-1))).to(config.device)
+            # unique_labels, label_counts = torch.unique(m_labels.reshape(-1), return_counts=True)
+            # label_weights = 1.0 / label_counts[torch.searchsorted(unique_labels, m_labels.reshape(-1))]
+            # label_weights = label_weights / label_weights.sum() * len(m_labels.reshape(-1))
+            # label_weights = label_weights.to(config.device) # (b)
 
-            loss1: torch.Tensor = criterion(logits_all.reshape(-1, logits_all.shape[-1]), m_labels.reshape(-1)) * label_weights
+            loss1: torch.Tensor = criterion(logits_all.reshape(-1, logits_all.shape[-1]), m_labels.reshape(-1))# * label_weights
             loss2 = compute_jsd_loss(logits_all)
             tri_loss = triplet_loss(anchors, positives, negatives)
             loss = loss1.mean() + loss2 + tri_loss
+
+            # print(f"compute loss time: {time.time()-start_time}")
+            start_time = time.time()
 
             if prev_encoder is not None:
                 prev_reps = prev_encoder(tokens).detach()
@@ -231,38 +271,47 @@ def train_mem_model(config, encoder, dropout_layer, classifier, training_data, e
                                                          torch.ones(tokens.size(0)).to(
                                                              config.device))
                 loss += feature_distill_loss
+            
+            # print(f"compute feature distill loss time: {time.time()-start_time}")
+            start_time = time.time()
 
             if prev_dropout_layer is not None and prev_classifier is not None:
-                prediction_distill_loss = None
-                dropout_output_all = []
-                prev_dropout_output_all = []
-                for i in range(config.f_pass):
-                    output, _ = dropout_layer(reps)
-                    prev_output, _ = prev_dropout_layer(reps)
-                    dropout_output_all.append(output)
-                    prev_dropout_output_all.append(output)
-                    pre_logits = prev_classifier(output).detach()
+                # Batch process all dropout operations
+                # batch_reps = reps.unsqueeze(0).expand(config.f_pass, -1, -1)  # [f_pass, batch_size, hidden_dim]
+                # outputs, _ = dropout_layer(batch_reps)  # [f_pass, batch_size, hidden_dim]
+                prev_outputs, _ = prev_dropout_layer(batch_reps)  # [f_pass, batch_size, hidden_dim]
 
-                    pre_logits = F.softmax(pre_logits.index_select(1, prev_relation_index) / T, dim=1)
+                # Compute all logits at once
+                pre_logits = prev_classifier(batch_outputs)  # [f_pass, batch_size, num_classes]
+                pre_logits = pre_logits.index_select(2, prev_relation_index)  # Select relevant indices
+                pre_logits = F.softmax(pre_logits / T, dim=2).detach()
 
-                    log_logits = F.log_softmax(logits_all[i].index_select(1, prev_relation_index) / T, dim=1)
-                    if i == 0:
-                        prediction_distill_loss = -torch.mean(torch.sum(pre_logits * log_logits, dim=1))
-                    else:
-                        prediction_distill_loss += -torch.mean(torch.sum(pre_logits * log_logits, dim=1))
+                # Compute log logits for all passes
+                log_logits = F.log_softmax(logits_all.index_select(2, prev_relation_index) / T, dim=2)
 
-                prediction_distill_loss /= config.f_pass
+                # Compute prediction distillation loss for all passes at once
+                prediction_distill_loss = -torch.mean(torch.sum(pre_logits * log_logits, dim=2))
+
+                # Add to total loss
                 loss += prediction_distill_loss
-                dropout_output_all = torch.stack(dropout_output_all)
-                prev_dropout_output_all = torch.stack(prev_dropout_output_all)
-                mean_dropout_output_all = torch.mean(dropout_output_all, dim=0)
-                mean_prev_dropout_output_all = torch.mean(prev_dropout_output_all,dim=0)
-                normalized_output = F.normalize(mean_dropout_output_all.view(-1, mean_dropout_output_all.size()[1]), p=2, dim=1)
-                normalized_prev_output = F.normalize(mean_prev_dropout_output_all.view(-1, mean_prev_dropout_output_all.size()[1]), p=2, dim=1)
-                hidden_distill_loss = distill_criterion(normalized_output, normalized_prev_output,
-                                                         torch.ones(tokens.size(0)).to(
-                                                             config.device))
+
+                # Compute mean outputs
+                mean_dropout_output = batch_outputs.mean(dim=0)  # [batch_size, hidden_dim]
+                mean_prev_dropout_output = prev_outputs.mean(dim=0)  # [batch_size, hidden_dim]
+
+                # Normalize outputs
+                normalized_output = F.normalize(mean_dropout_output, p=2, dim=1)
+                normalized_prev_output = F.normalize(mean_prev_dropout_output, p=2, dim=1)
+
+                # Compute hidden distillation loss
+                hidden_distill_loss = distill_criterion(
+                    normalized_output, 
+                    normalized_prev_output,
+                    torch.ones(tokens.size(0)).to(config.device)
+                )
                 loss += hidden_distill_loss
+
+            # print(f"compute hidden distill loss time: {time.time()-start_time}")
 
             loss.backward()
             losses.append(loss.item())
@@ -321,6 +370,8 @@ def evaluate_strict_model(config, encoder, dropout_layer, classifier, test_data,
 
     # find tempid for na_id
     na_tempid = map_relid2tempid[config.na_id]
+    print(f"na_tempid: {na_tempid}")
+    
     total_labels = []
     total_preds = []
 
@@ -343,6 +394,9 @@ def evaluate_strict_model(config, encoder, dropout_layer, classifier, test_data,
         # get prediction
         preds = np.argmax(seen_sim, axis=1)
         total_preds.extend(preds)
+
+    print("total_preds: ", total_preds)
+    print("total_labels: ", total_labels)
 
     return f1(total_preds, total_labels, na_tempid)
 
@@ -501,8 +555,8 @@ if __name__ == '__main__':
     config.task = args.task
     config.shot = args.shot
     config.step1_epochs = 5
-    config.step2_epochs = 15
-    config.step3_epochs = 20
+    config.step2_epochs = 5
+    config.step3_epochs = 5
     config.temperature = 0.08
 
     if config.task == "FewRel":
@@ -571,7 +625,7 @@ if __name__ == '__main__':
         relation_standard = {}
         forward_accs = []
         for steps, (training_data, valid_data, test_data, current_relations, historic_test_data, seen_relations) in enumerate(sampler):
-            print(current_relations)
+            print(seen_relations)
 
             prev_relations = history_relations[:]
             train_data_for_initial = []
@@ -629,6 +683,8 @@ if __name__ == '__main__':
             print(len(train_data_for_initial))
 
 
+            print(f"start training memory model")
+
             train_mem_model(config, encoder, dropout_layer, classifier, train_data_for_initial, config.step2_epochs, map_relid2tempid, new_relation_data,
                         prev_encoder, prev_dropout_layer, prev_classifier, prev_relation_index)
             print(f"first finished")
@@ -655,28 +711,17 @@ if __name__ == '__main__':
             print(f"memory finished")
 
             # wo na
-            test_data_1_wo_na = []
-            for relation in current_relations:
-                if relation != id2rel[config.na_id]:
-                    test_data_1_wo_na += test_data[relation]
-
             test_data_2_wo_na = []
             for relation in seen_relations:
                 if relation != id2rel[config.na_id]:
                     test_data_2_wo_na += historic_test_data[relation]
-            history_data.append(test_data_1_wo_na)
 
             total_acc_wo_na = evaluate_strict_model(config, encoder, dropout_layer, classifier, test_data_2_wo_na, seen_relations, map_relid2tempid)
 
             # w na
-            test_data_1_w_na = []
-            for relation in current_relations:
-                test_data_1_w_na += test_data[relation]
-
             test_data_2_w_na = []
             for relation in seen_relations:
                 test_data_2_w_na += historic_test_data[relation]
-            history_data.append(test_data_1_w_na)
 
             total_acc_w_na = evaluate_strict_model(config, encoder, dropout_layer, classifier, test_data_2_w_na, seen_relations, map_relid2tempid)
 
