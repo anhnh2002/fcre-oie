@@ -53,7 +53,7 @@ Now it's your turn! Please define the relationship in the following relational t
 Text: "{text}"
 Triplet: {triplet}
 Relation type: "{relation}"
-Definitions and examples of "passed away on":
+Definitions and examples of "{trigger}":
 """.strip()
 
 file = "./data/CFRLFewRel/CFRLdata_10_100_10_5/train_0.txt"
