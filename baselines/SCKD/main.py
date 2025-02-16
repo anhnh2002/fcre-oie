@@ -166,15 +166,9 @@ def train_first(config, encoder, dropout_layer, classifier, training_data, epoch
 
             # Compute label weights
             flat_labels = m_labels.reshape(-1)
-            # unique_labels, label_counts = torch.unique(flat_labels, return_counts=True)
-            # label_weights = torch.zeros_like(flat_labels, dtype=torch.float)
-            # label_weights.index_add_(0, flat_labels, torch.ones_like(flat_labels, dtype=torch.float))
-            # label_weights = 1.0 / label_weights
-            # label_weights = label_weights / label_weights.sum() * len(flat_labels)
-            # label_weights = label_weights.to(config.device)
 
             # Compute losses
-            loss1 = criterion(logits_all.reshape(-1, logits_all.shape[-1]), flat_labels)# * label_weights
+            loss1 = criterion(logits_all.reshape(-1, logits_all.shape[-1]), flat_labels)
             loss2 = compute_jsd_loss(logits_all)
             tri_loss = triplet_loss(anchors, positives, negatives)
             loss = loss1.mean() + loss2 + tri_loss
@@ -249,13 +243,7 @@ def train_mem_model(config, encoder, dropout_layer, classifier, training_data, e
             anchors = outputs
             m_labels = labels.expand((config.f_pass, labels.shape[0]))  # m,B
 
-            # label_weights = torch.ones(len(m_labels.reshape(-1))).to(config.device)
-            # unique_labels, label_counts = torch.unique(m_labels.reshape(-1), return_counts=True)
-            # label_weights = 1.0 / label_counts[torch.searchsorted(unique_labels, m_labels.reshape(-1))]
-            # label_weights = label_weights / label_weights.sum() * len(m_labels.reshape(-1))
-            # label_weights = label_weights.to(config.device) # (b)
-
-            loss1: torch.Tensor = criterion(logits_all.reshape(-1, logits_all.shape[-1]), m_labels.reshape(-1))# * label_weights
+            loss1: torch.Tensor = criterion(logits_all.reshape(-1, logits_all.shape[-1]), m_labels.reshape(-1))
             loss2 = compute_jsd_loss(logits_all)
             tri_loss = triplet_loss(anchors, positives, negatives)
             loss = loss1.mean() + loss2 + tri_loss
